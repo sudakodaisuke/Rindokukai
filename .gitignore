@@ -1,0 +1,34 @@
+# 設定ファイル（APIキーなど含むため）
+config.json
+
+# PDFファイル（著作権のため）
+books/*.pdf
+books/*.PDF
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# 仮想環境
+venv/
+.venv/
+env/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
