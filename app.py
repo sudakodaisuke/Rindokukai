@@ -1,45 +1,101 @@
 """
-輪読会準備アプリ
-英語医薬品ハンドブックの担当ページを、英語の語順で文節ごとに訳す台本を作成する。
+輪読会準備アプリ（Streamlit Cloud 対応版）
+英語医薬品ハンドブックの担当ページを英語語順・文節区切りで翻訳する台本を作成する。
 """
 
 import json
 import os
 import re
-import shutil
 import time
 
 import fitz  # PyMuPDF
 import streamlit as st
 
-# ─────────────────────────────────────────────
-# 定数・設定ファイル
-# ─────────────────────────────────────────────
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
-BOOKS_DIR = os.path.join(os.path.dirname(__file__), "books")
-
-DEFAULT_CONFIG = {
-    "gemini_api_key": "",
-    "deepl_api_key": "",
-    "books": [],
-}
+# ────────────────────────────────────────────
+# パス定数
+# ────────────────────────────────────────────
+BASE_DIR = os.path.dirname(__file__)
+CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
+BOOKS_DIR = os.path.join(BASE_DIR, "books")
 
 
-def load_config() -> dict:
+# ────────────────────────────────────────────
+# APIキー管理
+# ────────────────────────────────────────────
+
+def load_api_keys() -> dict:
+    """APIキーを st.secrets → config.json の優先順で読み込む。"""
+    keys = {"gemini_api_key": "", "deepl_api_key": ""}
+    # config.json（ローカル用）
     if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return DEFAULT_CONFIG.copy()
+        try:
+            with open(CONFIG_PATH, encoding="utf-8") as f:
+                saved = json.load(f)
+                for k in keys:
+                    if saved.get(k):
+                        keys[k] = saved[k]
+        except Exception:
+            pass
+    # st.secrets（Streamlit Cloud 優先）
+    try:
+        for k in keys:
+            if st.secrets.get(k):
+                keys[k] = st.secrets[k]
+    except Exception:
+        pass
+    # セッション上書き（UI入力後）
+    for k in keys:
+        if st.session_state.get(f"runtime_{k}"):
+            keys[k] = st.session_state[f"runtime_{k}"]
+    return keys
 
 
-def save_config(cfg: dict) -> None:
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
+def save_api_keys_local(gemini_key: str, deepl_key: str) -> bool:
+    """config.json に保存（ローカル用。クラウドでは失敗してもOK）。"""
+    data = {}
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            pass
+    data["gemini_api_key"] = gemini_key
+    data["deepl_api_key"] = deepl_key
+    try:
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception:
+        return False
 
 
-# ─────────────────────────────────────────────
+def secrets_has(key: str) -> bool:
+    try:
+        return bool(st.secrets.get(key))
+    except Exception:
+        return False
+
+
+# ────────────────────────────────────────────
 # PDF ユーティリティ
-# ─────────────────────────────────────────────
+# ────────────────────────────────────────────
+
+def scan_books() -> list[dict]:
+    """books/ フォルダ内の PDF を自動スキャンして一覧を返す。"""
+    os.makedirs(BOOKS_DIR, exist_ok=True)
+    books = []
+    for fname in sorted(os.listdir(BOOKS_DIR)):
+        if fname.lower().endswith(".pdf"):
+            path = os.path.join(BOOKS_DIR, fname)
+            try:
+                doc = fitz.open(path)
+                total_pages = len(doc)
+                doc.close()
+            except Exception:
+                total_pages = 0
+            books.append({"name": fname, "path": path, "total_pages": total_pages})
+    return books
+
 
 def extract_text(pdf_path: str, start_page: int, end_page: int) -> str:
     """指定ページ範囲のテキストを抽出（ページ番号は1始まり）。"""
@@ -59,22 +115,18 @@ def split_sentences(text: str) -> list[str]:
     """テキストを文ごとに分割する。"""
     # ハイフネーションされた改行を結合
     text = re.sub(r"-\n(\w)", r"\1", text)
-    # 改行を空白に
     text = re.sub(r"\n+", " ", text)
-    # 複数空白を1つに
     text = re.sub(r" {2,}", " ", text).strip()
-
-    # 文分割：ピリオド/!/?の後ろで大文字が続く場合
-    # 略語（e.g., i.e., Fig., etc.）は分割しない
-    abbreviations = r"(?<!\b(?:e\.g|i\.e|etc|Fig|Vol|No|Dr|Mr|Mrs|Ms|Prof|St|vs|cf|al|ca|approx|dept|est|incl|excl|ref|resp))"
-    sentence_pattern = abbreviations + r"(?<=[.!?])\s+(?=[A-Z])"
-    sentences = re.split(sentence_pattern, text)
+    # 略語の後では分割しない
+    abbr = r"(?<!\b(?:e\.g|i\.e|etc|Fig|Vol|No|Dr|Mr|Mrs|Ms|Prof|St|vs|cf|al|ca|approx|dept|est|incl|excl|ref|resp))"
+    pattern = abbr + r"(?<=[.!?])\s+(?=[A-Z])"
+    sentences = re.split(pattern, text)
     return [s.strip() for s in sentences if s.strip() and len(s.strip()) > 10]
 
 
-# ─────────────────────────────────────────────
-# 翻訳ユーティリティ
-# ─────────────────────────────────────────────
+# ────────────────────────────────────────────
+# 翻訳
+# ────────────────────────────────────────────
 
 GEMINI_PROMPT = """あなたは医薬品製造の専門家です。
 以下の英文を、英語の語順に従って文節ごとに訳してください。
@@ -94,10 +146,8 @@ def translate_gemini(sentence: str, api_key: str) -> str:
         import google.generativeai as genai
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel("gemini-1.5-flash")
-        prompt = GEMINI_PROMPT.format(sentence=sentence)
-        response = model.generate_content(prompt)
+        response = model.generate_content(GEMINI_PROMPT.format(sentence=sentence))
         result = response.text.strip()
-        # 「訳:」が残っていれば除去
         result = re.sub(r"^訳[:：]\s*", "", result)
         return result
     except Exception as e:
@@ -114,9 +164,9 @@ def translate_deepl(sentence: str, api_key: str) -> str:
         return f"[DeepL エラー: {e}]"
 
 
-# ─────────────────────────────────────────────
+# ────────────────────────────────────────────
 # 台本テキスト生成（ダウンロード用）
-# ─────────────────────────────────────────────
+# ────────────────────────────────────────────
 
 def build_script_text(results: list[dict]) -> str:
     lines = ["=" * 60, "輪読会 台本", "=" * 60, ""]
@@ -124,10 +174,10 @@ def build_script_text(results: list[dict]) -> str:
         lines.append(f"【{i}】{r['sentence']}")
         lines.append("")
         if r.get("gemini"):
-            lines.append(f"  🤖 Gemini（英語語順訳）:")
+            lines.append("  🤖 Gemini（英語語順訳）:")
             lines.append(f"  {r['gemini']}")
         if r.get("deepl"):
-            lines.append(f"  📝 DeepL（参考訳）:")
+            lines.append("  📝 DeepL（参考訳）:")
             lines.append(f"  {r['deepl']}")
         lines.append("")
         lines.append("-" * 60)
@@ -135,28 +185,22 @@ def build_script_text(results: list[dict]) -> str:
     return "\n".join(lines)
 
 
-# ─────────────────────────────────────────────
+# ────────────────────────────────────────────
 # Streamlit アプリ本体
-# ─────────────────────────────────────────────
+# ────────────────────────────────────────────
 
-st.set_page_config(
-    page_title="輪読会準備アプリ",
-    page_icon="📖",
-    layout="wide",
-)
-
+st.set_page_config(page_title="輪読会準備アプリ", page_icon="📖", layout="wide")
 st.title("📖 輪読会準備アプリ")
 st.caption("英語医薬品ハンドブックの担当ページを、英語の語順で文節ごとに訳す台本を作成します。")
 
-# Session state 初期化
+# セッション初期化
 if "extracted_text" not in st.session_state:
     st.session_state.extracted_text = ""
 if "translation_results" not in st.session_state:
     st.session_state.translation_results = []
 
-cfg = load_config()
-
 tab_settings, tab_pages, tab_script = st.tabs(["⚙️ 設定", "📄 ページ選択・テキスト確認", "📋 台本"])
+
 
 # ══════════════════════════════════════════════
 # Tab 1: 設定
@@ -164,17 +208,24 @@ tab_settings, tab_pages, tab_script = st.tabs(["⚙️ 設定", "📄 ページ�
 with tab_settings:
     st.header("⚙️ 設定")
 
-    # ── API キー ────────────────────────────
+    # ── APIキー ──────────────────────────────
     st.subheader("翻訳 API キー")
+
+    keys = load_api_keys()
+    from_secrets_gemini = secrets_has("gemini_api_key")
+    from_secrets_deepl = secrets_has("deepl_api_key")
 
     col_g, col_d = st.columns(2)
 
     with col_g:
         st.markdown("**🤖 Gemini API キー**")
-        gemini_key = st.text_input(
+        if from_secrets_gemini:
+            st.success("✅ Streamlit Cloud のシークレットから設定済み")
+        gemini_input = st.text_input(
             "Gemini API キー",
-            value=cfg.get("gemini_api_key", ""),
+            value="" if from_secrets_gemini else keys["gemini_api_key"],
             type="password",
+            placeholder="（シークレットで設定済み）" if from_secrets_gemini else "AIzaSy...",
             key="gemini_key_input",
             label_visibility="collapsed",
         )
@@ -182,99 +233,132 @@ with tab_settings:
             st.markdown("""
 1. [Google AI Studio](https://aistudio.google.com/app/apikey) にアクセス
 2. Googleアカウントでサインイン
-3. 「APIキーを作成」をクリック
-4. 生成されたキーをコピーして上の欄に貼り付け
+3. 「**Create API key**」をクリック
+4. 生成されたキー（`AIzaSy...`）をコピーして上の欄に貼り付け
 
 **無料枠（2024年時点）：**
-- Gemini 1.5 Flash: 毎分15リクエスト、1日100万トークン無料
+- Gemini 1.5 Flash: 1分あたり15リクエスト、1日100万トークン
 - クレジットカード登録不要
 """)
 
     with col_d:
         st.markdown("**📝 DeepL API キー**")
-        deepl_key = st.text_input(
+        if from_secrets_deepl:
+            st.success("✅ Streamlit Cloud のシークレットから設定済み")
+        deepl_input = st.text_input(
             "DeepL API キー",
-            value=cfg.get("deepl_api_key", ""),
+            value="" if from_secrets_deepl else keys["deepl_api_key"],
             type="password",
+            placeholder="（シークレットで設定済み）" if from_secrets_deepl else "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx",
             key="deepl_key_input",
             label_visibility="collapsed",
         )
         with st.expander("DeepL API キーの取得方法"):
             st.markdown("""
-1. [DeepL API](https://www.deepl.com/pro-api) にアクセス
-2. 「無料で始める」→ DeepL API Free に登録
-3. クレジットカードの登録が必要（無料枠を超えなければ課金なし）
-4. アカウント設定ページで API キーを確認
-5. コピーして上の欄に貼り付け
+1. [DeepL API](https://www.deepl.com/ja/pro-api) にアクセス
+2. 「**無料で始める**」→ **DeepL API Free** に登録
+3. クレジットカードの登録が必要（無料枠内なら課金なし）
+4. アカウント設定ページで API キーを確認・コピー
 
 **無料枠：** 毎月 50万文字まで無料
 
-> ⚠️ DeepL の無料 API キーは末尾が `:fx` になっています（例: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx`）
+> ⚠️ 無料版のキーは末尾が `:fx` になっています
+> 例: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx`
 """)
 
     if st.button("APIキーを保存", type="primary"):
-        cfg["gemini_api_key"] = gemini_key
-        cfg["deepl_api_key"] = deepl_key
-        save_config(cfg)
-        st.success("APIキーを保存しました。")
-
-    st.divider()
-
-    # ── PDF 登録 ────────────────────────────
-    st.subheader("📚 PDFの登録")
-
-    uploaded = st.file_uploader(
-        "PDFファイルをアップロード（一度登録すれば次回から選択するだけでOK）",
-        type=["pdf"],
-        key="pdf_uploader",
-    )
-    book_display_name = st.text_input(
-        "本のタイトル（任意）",
-        placeholder="例: HANDBOOK OF PHARMACEUTICAL GRANULATION 4th Ed.",
-        key="book_title_input",
-    )
-
-    if st.button("PDFを登録", disabled=(uploaded is None)):
-        os.makedirs(BOOKS_DIR, exist_ok=True)
-        dest_path = os.path.join(BOOKS_DIR, uploaded.name)
-        with open(dest_path, "wb") as f:
-            f.write(uploaded.getbuffer())
-        # ページ数取得
-        doc = fitz.open(dest_path)
-        total_pages = len(doc)
-        doc.close()
-        title = book_display_name.strip() or uploaded.name
-        # 重複チェック
-        existing_paths = [b["path"] for b in cfg["books"]]
-        rel_path = os.path.join("books", uploaded.name)
-        if rel_path not in existing_paths:
-            cfg["books"].append({"name": title, "path": rel_path, "total_pages": total_pages})
-            save_config(cfg)
-            st.success(f"登録完了：{title}（{total_pages}ページ）")
+        new_gemini = gemini_input if gemini_input else keys["gemini_api_key"]
+        new_deepl = deepl_input if deepl_input else keys["deepl_api_key"]
+        # セッションに保持（クラウド・ローカル共通）
+        st.session_state["runtime_gemini_api_key"] = new_gemini
+        st.session_state["runtime_deepl_api_key"] = new_deepl
+        # ローカルなら config.json にも保存
+        saved_to_file = save_api_keys_local(new_gemini, new_deepl)
+        if saved_to_file:
+            st.success("APIキーを保存しました（config.json）。")
         else:
-            st.info("このPDFはすでに登録されています。")
+            st.info(
+                "APIキーをこのセッション中のみ保持します。"
+                "再起動後も保持したい場合は、Streamlit Cloud の **Secrets** に設定してください。"
+            )
 
     st.divider()
 
-    # ── 登録済み本の一覧 ────────────────────
-    st.subheader("登録済みの本")
-    if not cfg["books"]:
-        st.info("まだ本が登録されていません。上のフォームからPDFをアップロードしてください。")
+    # ── PDF管理 ──────────────────────────────
+    st.subheader("📚 PDF の管理")
+
+    books = scan_books()
+    if books:
+        st.success(f"{len(books)} 件の PDF が books/ フォルダにあります。")
+        for b in books:
+            st.text(f"  📄 {b['name']}  （{b['total_pages']} ページ）")
     else:
-        for idx, book in enumerate(cfg["books"]):
-            col_name, col_pages, col_del = st.columns([4, 1, 1])
-            with col_name:
-                st.text(book["name"])
-            with col_pages:
-                st.text(f"{book['total_pages']}p")
-            with col_del:
-                if st.button("削除", key=f"del_{idx}"):
-                    full_path = os.path.join(os.path.dirname(__file__), book["path"])
-                    if os.path.exists(full_path):
-                        os.remove(full_path)
-                    cfg["books"].pop(idx)
-                    save_config(cfg)
-                    st.rerun()
+        st.info("books/ フォルダに PDF がありません。下の手順で追加してください。")
+
+    with st.expander("📤 PDF をアップロードする（ローカル実行時のみ）"):
+        st.caption("Streamlit Cloud では Git LFS を使って事前に books/ に入れてください（下の手順参照）。")
+        uploaded = st.file_uploader("PDFファイル", type=["pdf"], key="pdf_uploader")
+        if st.button("books/ に保存", disabled=(uploaded is None)):
+            dest = os.path.join(BOOKS_DIR, uploaded.name)
+            with open(dest, "wb") as f:
+                f.write(uploaded.getbuffer())
+            st.success(f"保存しました: {uploaded.name}")
+            st.rerun()
+
+    with st.expander("☁️ Streamlit Cloud へのデプロイ手順（初回のみ）"):
+        st.markdown("""
+### ステップ 1｜Git LFS のインストール
+
+**Mac:**
+```bash
+brew install git-lfs
+```
+**Windows:**  Git for Windows に含まれています。下記を実行するだけ。
+```bash
+git lfs install
+```
+
+---
+
+### ステップ 2｜リポジトリで Git LFS を有効化
+
+```bash
+cd Rindokukai
+git lfs install
+# .gitattributes はすでに設定済みです（このリポジトリに含まれています）
+```
+
+---
+
+### ステップ 3｜PDF を books/ に追加してコミット
+
+```bash
+# PDF ファイルを books/ フォルダにコピー
+cp /path/to/handbook.pdf books/
+
+# コミット（Git LFS が自動で大きいファイルを管理）
+git add books/handbook.pdf
+git commit -m "ハンドブックPDFを追加（Git LFS）"
+git push
+```
+
+---
+
+### ステップ 4｜Streamlit Community Cloud でデプロイ
+
+1. [share.streamlit.io](https://share.streamlit.io) にアクセス（GitHub アカウントでログイン）
+2. 「**New app**」→ このリポジトリを選択 → メインファイルに `app.py` を指定
+3. 「**Advanced settings**」→ **Secrets** に以下を貼り付け：
+
+```toml
+gemini_api_key = "AIzaSy..."
+deepl_api_key = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx"
+```
+
+4. 「**Deploy**」をクリック → 数分でURLが発行されます
+
+> ✅ このURLをスマホのブラウザで開けば完成です！
+""")
 
 
 # ══════════════════════════════════════════════
@@ -283,33 +367,28 @@ with tab_settings:
 with tab_pages:
     st.header("📄 ページ選択・テキスト確認")
 
-    cfg = load_config()
+    books = scan_books()
 
-    if not cfg["books"]:
-        st.warning("まず「⚙️ 設定」タブでPDFを登録してください。")
+    if not books:
+        st.warning("books/ フォルダに PDF がありません。「⚙️ 設定」タブから追加してください。")
     else:
-        book_names = [b["name"] for b in cfg["books"]]
-        selected_name = st.selectbox("本を選択", book_names, key="book_select")
-        selected_book = next(b for b in cfg["books"] if b["name"] == selected_name)
+        book_options = {b["name"]: b for b in books}
+        selected_name = st.selectbox("本を選択", list(book_options.keys()), key="book_select")
+        selected_book = book_options[selected_name]
         total_pages = selected_book["total_pages"]
+        st.caption(f"総ページ数: {total_pages} ページ")
 
-        st.caption(f"総ページ数: {total_pages}ページ")
-
-        col_start, col_end = st.columns(2)
-        with col_start:
+        col_s, col_e = st.columns(2)
+        with col_s:
             start_page = st.number_input(
                 "開始ページ（本のページ番号）",
-                min_value=1,
-                max_value=total_pages,
-                value=1,
+                min_value=1, max_value=total_pages, value=1,
                 key="start_page",
             )
-        with col_end:
+        with col_e:
             end_page = st.number_input(
                 "終了ページ（本のページ番号）",
-                min_value=1,
-                max_value=total_pages,
-                value=min(4, total_pages),
+                min_value=1, max_value=total_pages, value=min(4, total_pages),
                 key="end_page",
             )
 
@@ -317,70 +396,67 @@ with tab_pages:
             st.error("終了ページは開始ページ以上にしてください。")
         else:
             if st.button("テキストを抽出", type="primary"):
-                pdf_full_path = os.path.join(os.path.dirname(__file__), selected_book["path"])
-                if not os.path.exists(pdf_full_path):
-                    st.error("PDFファイルが見つかりません。再登録してください。")
-                else:
-                    with st.spinner("テキストを抽出中..."):
-                        text = extract_text(pdf_full_path, int(start_page), int(end_page))
-                    st.session_state.extracted_text = text
-                    st.session_state.translation_results = []
-                    st.success(f"ページ {start_page}〜{end_page} のテキストを抽出しました。")
+                with st.spinner("テキストを抽出中..."):
+                    text = extract_text(selected_book["path"], int(start_page), int(end_page))
+                st.session_state.extracted_text = text
+                st.session_state.translation_results = []
+                st.success(f"ページ {start_page}〜{end_page} のテキストを抽出しました。")
 
             if st.session_state.extracted_text:
                 st.subheader("抽出テキストの確認・編集")
-                st.caption("PDFのレイアウトによってはノイズが入ることがあります。不要な文字列は削除してから台本を作成してください。")
-                edited_text = st.text_area(
+                st.caption("ヘッダー・フッター・図の説明文など不要なテキストは削除してから台本を作成してください。")
+                edited = st.text_area(
                     "テキスト",
                     value=st.session_state.extracted_text,
                     height=400,
-                    key="text_area",
                     label_visibility="collapsed",
                 )
-                st.session_state.extracted_text = edited_text
+                st.session_state.extracted_text = edited
 
-                sentences = split_sentences(edited_text)
-                st.info(f"検出された文の数: {len(sentences)}文")
+                sentences = split_sentences(edited)
+                st.info(f"検出された文の数: {len(sentences)} 文")
 
-                # API キー確認
-                cfg = load_config()
-                has_gemini = bool(cfg.get("gemini_api_key"))
-                has_deepl = bool(cfg.get("deepl_api_key"))
+                keys = load_api_keys()
+                gemini_key = keys["gemini_api_key"]
+                deepl_key = keys["deepl_api_key"]
 
-                col_use_gemini, col_use_deepl = st.columns(2)
-                with col_use_gemini:
+                col_ug, col_ud = st.columns(2)
+                with col_ug:
                     use_gemini = st.checkbox(
-                        "🤖 Gemini で翻訳（英語語順・文節訳）",
-                        value=has_gemini,
-                        disabled=not has_gemini,
+                        "🤖 Gemini（英語語順・文節訳）",
+                        value=bool(gemini_key),
+                        disabled=not gemini_key,
                         key="use_gemini",
                     )
-                    if not has_gemini:
-                        st.caption("「設定」タブで Gemini API キーを登録してください。")
-                with col_use_deepl:
+                    if not gemini_key:
+                        st.caption("「設定」タブで Gemini API キーを入力してください。")
+                with col_ud:
                     use_deepl = st.checkbox(
-                        "📝 DeepL で翻訳（参考訳）",
-                        value=has_deepl,
-                        disabled=not has_deepl,
+                        "📝 DeepL（参考訳）",
+                        value=bool(deepl_key),
+                        disabled=not deepl_key,
                         key="use_deepl",
                     )
-                    if not has_deepl:
-                        st.caption("「設定」タブで DeepL API キーを登録してください。")
+                    if not deepl_key:
+                        st.caption("「設定」タブで DeepL API キーを入力してください。")
 
                 if not use_gemini and not use_deepl:
                     st.warning("少なくとも1つの翻訳サービスを選択してください。")
-                elif st.button("🚀 台本を作成する", type="primary", disabled=(not sentences)):
+                elif st.button("🚀 台本を作成する", type="primary", disabled=not sentences):
                     results = []
                     progress = st.progress(0, text="翻訳中...")
                     for i, sentence in enumerate(sentences):
                         row = {"sentence": sentence, "gemini": "", "deepl": ""}
                         if use_gemini:
-                            row["gemini"] = translate_gemini(sentence, cfg["gemini_api_key"])
+                            row["gemini"] = translate_gemini(sentence, gemini_key)
                             time.sleep(0.3)  # レート制限を避けるための待機
                         if use_deepl:
-                            row["deepl"] = translate_deepl(sentence, cfg["deepl_api_key"])
+                            row["deepl"] = translate_deepl(sentence, deepl_key)
                         results.append(row)
-                        progress.progress((i + 1) / len(sentences), text=f"翻訳中... {i+1}/{len(sentences)}")
+                        progress.progress(
+                            (i + 1) / len(sentences),
+                            text=f"翻訳中... {i + 1}/{len(sentences)} 文",
+                        )
                     st.session_state.translation_results = results
                     progress.empty()
                     st.success("台本を作成しました。「📋 台本」タブで確認してください。")
@@ -393,27 +469,22 @@ with tab_script:
     st.header("📋 台本")
 
     results = st.session_state.translation_results
-
     if not results:
         st.info("「📄 ページ選択・テキスト確認」タブで台本を作成してください。")
     else:
-        # ダウンロードボタン
         script_text = build_script_text(results)
         st.download_button(
-            label="📥 台本をテキストファイルでダウンロード",
+            "📥 台本をテキストファイルでダウンロード",
             data=script_text.encode("utf-8"),
             file_name="rindokukai_script.txt",
             mime="text/plain",
         )
-
         st.divider()
-
         for i, r in enumerate(results, 1):
             with st.container(border=True):
                 st.markdown(f"**【{i}】** {r['sentence']}")
                 if r.get("gemini"):
                     st.markdown("🤖 **Gemini（英語語順訳）**")
-                    # ／区切りを視覚的に見やすくする
                     parts = r["gemini"].split("／")
                     formatted = "　　**／** ".join(p.strip() for p in parts if p.strip())
                     st.markdown(f"> {formatted}")
