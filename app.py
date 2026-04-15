@@ -34,7 +34,7 @@ GEMINI_MODELS = [
     "gemini-2.5-flash",        # 無料: 5RPM / 20RPD
     "gemini-2.0-flash",        # 無料枠なし（使用不可）
 ]
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite"
+DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
 
 
 def load_api_keys() -> dict:
@@ -507,8 +507,8 @@ with tab_settings:
         key="gemini_model_select",
     )
     custom_model = st.text_input(
-        "モデル名を直接入力（候補にない場合・エラーが出る場合）",
-        placeholder="例: gemini-3.1-flash-lite-001　または空欄のまま上の候補を使用",
+        "モデル名を直接入力（エラーが出る場合のみ。空欄なら上の候補を使用）",
+        placeholder="例: gemini-3.1-flash-lite-001 など",
         key="custom_model_input",
     )
     effective_model = custom_model.strip() if custom_model.strip() else selected_model
@@ -532,15 +532,15 @@ with tab_settings:
 > **Quota エラーが続く場合：** 1日の上限に達した可能性があります。翌日に試してください。
 """)
 
-    if st.button("APIキーを設定", type="primary"):
+    st.warning("⚠️ APIキーやモデルを変更したら、必ず下のボタンを押してください！")
+    if st.button("✅ 確定して保存する", type="primary", use_container_width=True):
         new_gemini = gemini_input if gemini_input else keys["gemini_api_key"]
         new_deepl = deepl_input if deepl_input else keys["deepl_api_key"]
         saved_to_file = save_api_keys(new_gemini, new_deepl, effective_model)
         if saved_to_file:
-            st.success("✅ APIキーを保存しました。次回起動時も入力不要です。")
+            st.success("✅ 保存しました！次回起動時も入力不要です。")
         else:
-            st.success("✅ APIキーをこのセッションに設定しました。"
-                       "（このタブを閉じるまで有効です。他のユーザーには見えません。）")
+            st.success("✅ このセッションに設定しました。（タブを閉じるまで有効）")
 
     st.divider()
 
