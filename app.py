@@ -29,14 +29,13 @@ def is_local() -> bool:
 
 
 GEMINI_MODELS = [
-    "gemini-3.1-flash-lite",      # 無料: 15RPM / 500RPD（最もおすすめ）
-    "gemini-2.5-flash",           # 無料: 5RPM / 20RPD
-    "gemini-2.5-flash-lite",      # 無料: 10RPM / 20RPD
-    "gemini-3-flash",             # 無料: 5RPM / 20RPD
-    "gemini-2.0-flash",           # 無料枠なし（使用不可）
-    "gemini-1.5-flash",           # 旧版（使えない場合あり）
+    "gemini-2.0-flash-lite",   # 無料枠あり・軽量高速（おすすめ）
+    "gemini-2.0-flash",        # 無料枠あり・標準
+    "gemini-2.5-flash",        # 無料枠あり・高精度
+    "gemini-2.5-pro",          # 高精度（無料枠は限定的）
+    "gemini-1.5-flash",        # 旧版（後方互換）
 ]
-DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
+DEFAULT_GEMINI_MODEL = "gemini-2.0-flash-lite"
 
 
 def load_api_keys() -> dict:
@@ -56,6 +55,9 @@ def load_api_keys() -> dict:
     for k in keys:
         if st.session_state.get(k):
             keys[k] = st.session_state[k]
+    # 廃止モデルが保存されていた場合はデフォルトに戻す
+    if keys.get("gemini_model") not in GEMINI_MODELS:
+        keys["gemini_model"] = DEFAULT_GEMINI_MODEL
     return keys
 
 
@@ -218,14 +220,24 @@ def translate_gemini_batch(sentences: list[str], api_key: str, model_name: str =
         response = model.generate_content(prompt)
         result_text = response.text.strip()
         results = [{"english": "", "japanese": ""} for _ in sentences]
+
+        # 優先: 【n】\n英: ...\n日: ... 形式
         block_pat = re.compile(
             r"【(\d+)】\s*\n英[:：]\s*(.+?)\n日[:：]\s*(.+?)(?=\n?【\d+】|$)", re.DOTALL
         )
-        for match in block_pat.finditer(result_text):
-            idx = int(match.group(1)) - 1
-            if 0 <= idx < len(sentences):
-                results[idx]["english"] = match.group(2).strip()
-                results[idx]["japanese"] = match.group(3).strip()
+        matched = list(block_pat.finditer(result_text))
+        if matched:
+            for match in matched:
+                idx = int(match.group(1)) - 1
+                if 0 <= idx < len(sentences):
+                    results[idx]["english"] = match.group(2).strip()
+                    results[idx]["japanese"] = match.group(3).strip()
+        else:
+            # フォールバック: 【n】 訳テキスト 形式（英文スラッシュなし）
+            for match in re.finditer(r"【(\d+)】\s*(.+?)(?=【\d+】|$)", result_text, re.DOTALL):
+                idx = int(match.group(1)) - 1
+                if 0 <= idx < len(sentences):
+                    results[idx]["japanese"] = match.group(2).strip()
         return results
     except Exception as e:
         return [{"english": "", "japanese": f"[Gemini バッチエラー: {e}]"}] * len(sentences)
@@ -468,17 +480,18 @@ with tab_settings:
         key="gemini_model_select",
         label_visibility="collapsed",
     )
-    with st.expander("モデルの無料枠について（Quota エラーが出る場合はここを確認）"):
+    with st.expander("モデルが見つからない / Quota エラーが出る場合はここを確認"):
         st.markdown("""
-| モデル | 無料RPM | 無料RPD | おすすめ |
-|---|---|---|---|
-| `gemini-3.1-flash-lite` | 15回/分 | **500回/日** | ★★★ |
-| `gemini-2.5-flash` | 5回/分 | 20回/日 | ★★ |
-| `gemini-2.5-flash-lite` | 10回/分 | 20回/日 | ★★ |
-| `gemini-3-flash` | 5回/分 | 20回/日 | ★ |
-| `gemini-2.0-flash` | **0（使用不可）** | 0 | ❌ |
+| モデル | 特徴 | おすすめ |
+|---|---|---|
+| `gemini-2.0-flash-lite` | 軽量・高速・無料枠あり | ★★★ |
+| `gemini-2.0-flash` | 標準・無料枠あり | ★★ |
+| `gemini-2.5-flash` | 高精度・無料枠あり | ★★ |
+| `gemini-2.5-pro` | 最高精度（無料枠は限定） | ★ |
+| `gemini-1.5-flash` | 旧版（後方互換） | △ |
 
-> **Quota エラーが出る場合：** `gemini-3.1-flash-lite` が最も無料枠が大きくおすすめです。
+> エラーが出る場合は **`gemini-2.0-flash-lite`** を試してください。
+> Quota エラーは時間をおくと解消されることがあります（1分待つ or 翌日）。
 """)
 
     if st.button("APIキーを設定", type="primary"):
