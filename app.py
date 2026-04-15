@@ -224,20 +224,16 @@ with tab_settings:
     st.subheader("翻訳 API キー")
 
     keys = load_api_keys()
-    from_secrets_gemini = secrets_has("gemini_api_key")
-    from_secrets_deepl = secrets_has("deepl_api_key")
 
     col_g, col_d = st.columns(2)
 
     with col_g:
         st.markdown("**🤖 Gemini API キー**")
-        if from_secrets_gemini:
-            st.success("✅ Streamlit Cloud のシークレットから設定済み")
         gemini_input = st.text_input(
             "Gemini API キー",
-            value="" if from_secrets_gemini else keys["gemini_api_key"],
+            value=keys["gemini_api_key"],
             type="password",
-            placeholder="（シークレットで設定済み）" if from_secrets_gemini else "AIzaSy...",
+            placeholder="AIzaSy...",
             key="gemini_key_input",
             label_visibility="collapsed",
         )
@@ -255,13 +251,11 @@ with tab_settings:
 
     with col_d:
         st.markdown("**📝 DeepL API キー**")
-        if from_secrets_deepl:
-            st.success("✅ Streamlit Cloud のシークレットから設定済み")
         deepl_input = st.text_input(
             "DeepL API キー",
-            value="" if from_secrets_deepl else keys["deepl_api_key"],
+            value=keys["deepl_api_key"],
             type="password",
-            placeholder="（シークレットで設定済み）" if from_secrets_deepl else "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx",
+            placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx",
             key="deepl_key_input",
             label_visibility="collapsed",
         )
