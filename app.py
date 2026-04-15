@@ -23,11 +23,16 @@ BOOKS_DIR = os.path.join(BASE_DIR, "books")
 # APIキー管理
 # ────────────────────────────────────────────
 
+def is_local() -> bool:
+    """ローカル実行かどうかを判定。Streamlit Cloud では /mount/src にマウントされる。"""
+    return not os.path.exists("/mount/src")
+
+
 def load_api_keys() -> dict:
-    """APIキーを st.secrets → config.json の優先順で読み込む。"""
+    """APIキーをセッション → config.json（ローカルのみ）の順で読み込む。"""
     keys = {"gemini_api_key": "", "deepl_api_key": ""}
-    # config.json（ローカル用）
-    if os.path.exists(CONFIG_PATH):
+    # ローカル実行時のみ config.json から読み込む（クラウドでは読まない）
+    if is_local() and os.path.exists(CONFIG_PATH):
         try:
             with open(CONFIG_PATH, encoding="utf-8") as f:
                 saved = json.load(f)
@@ -36,44 +41,39 @@ def load_api_keys() -> dict:
                         keys[k] = saved[k]
         except Exception:
             pass
-    # st.secrets（Streamlit Cloud 優先）
-    try:
-        for k in keys:
-            if st.secrets.get(k):
-                keys[k] = st.secrets[k]
-    except Exception:
-        pass
-    # セッション上書き（UI入力後）
+    # セッションステートから読み込む（ユーザーごとに完全に独立・安全）
     for k in keys:
-        if st.session_state.get(f"runtime_{k}"):
-            keys[k] = st.session_state[f"runtime_{k}"]
+        if st.session_state.get(k):
+            keys[k] = st.session_state[k]
     return keys
 
 
-def save_api_keys_local(gemini_key: str, deepl_key: str) -> bool:
-    """config.json に保存（ローカル用。クラウドでは失敗してもOK）。"""
-    data = {}
-    if os.path.exists(CONFIG_PATH):
+def save_api_keys(gemini_key: str, deepl_key: str) -> bool:
+    """APIキーを保存する。
+    - 常に: セッションステートに保存（ユーザーごとに独立・他のユーザーからは見えない）
+    - ローカルのみ: config.json にも保存（次回起動時に再入力不要）
+    """
+    # セッションステートに保存（クラウド・ローカル共通・安全）
+    st.session_state["gemini_api_key"] = gemini_key
+    st.session_state["deepl_api_key"] = deepl_key
+    # ローカルのみ config.json にも保存
+    if is_local():
+        data = {}
+        if os.path.exists(CONFIG_PATH):
+            try:
+                with open(CONFIG_PATH, encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                pass
+        data["gemini_api_key"] = gemini_key
+        data["deepl_api_key"] = deepl_key
         try:
-            with open(CONFIG_PATH, encoding="utf-8") as f:
-                data = json.load(f)
+            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return True
         except Exception:
             pass
-    data["gemini_api_key"] = gemini_key
-    data["deepl_api_key"] = deepl_key
-    try:
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        return True
-    except Exception:
-        return False
-
-
-def secrets_has(key: str) -> bool:
-    try:
-        return bool(st.secrets.get(key))
-    except Exception:
-        return False
+    return False
 
 
 # ────────────────────────────────────────────
@@ -266,21 +266,15 @@ with tab_settings:
 > 例: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx`
 """)
 
-    if st.button("APIキーを保存", type="primary"):
+    if st.button("APIキーを設定", type="primary"):
         new_gemini = gemini_input if gemini_input else keys["gemini_api_key"]
         new_deepl = deepl_input if deepl_input else keys["deepl_api_key"]
-        # セッションに保持（クラウド・ローカル共通）
-        st.session_state["runtime_gemini_api_key"] = new_gemini
-        st.session_state["runtime_deepl_api_key"] = new_deepl
-        # ローカルなら config.json にも保存
-        saved_to_file = save_api_keys_local(new_gemini, new_deepl)
+        saved_to_file = save_api_keys(new_gemini, new_deepl)
         if saved_to_file:
-            st.success("APIキーを保存しました（config.json）。")
+            st.success("✅ APIキーを保存しました。次回起動時も入力不要です。")
         else:
-            st.info(
-                "APIキーをこのセッション中のみ保持します。"
-                "再起動後も保持したい場合は、Streamlit Cloud の **Secrets** に設定してください。"
-            )
+            st.success("✅ APIキーをこのセッションに設定しました。"
+                       "（このタブを閉じるまで有効です。他のユーザーには見えません。）")
 
     st.divider()
 
