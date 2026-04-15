@@ -29,8 +29,9 @@ def is_local() -> bool:
 
 
 GEMINI_MODELS = [
-    "gemini-3.1-flash-lite",   # 無料: 15RPM / 500RPD（最もおすすめ）
-    "gemini-2.5-flash-lite",   # 無料: 10RPM / 20RPD
+    "gemini-2.5-flash-lite",   # 無料: 10RPM / 20RPD（デフォルト）
+    "gemini-3.1-flash-lite",   # 無料: 15RPM / 500RPD（ハイフン版）
+    "Gemini 3.1 Flash Lite",   # 無料: 15RPM / 500RPD（表示名版・こちらが動く場合あり）
     "gemini-2.5-flash",        # 無料: 5RPM / 20RPD
     "gemini-2.0-flash",        # 無料枠なし（使用不可）
 ]
