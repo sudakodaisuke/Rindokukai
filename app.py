@@ -29,13 +29,12 @@ def is_local() -> bool:
 
 
 GEMINI_MODELS = [
-    "Gemini 3.1 Flash Lite",   # 無料: 15RPM / 500RPD（動作確認済み・デフォルト）
-    "gemini-2.5-flash-lite",   # 無料: 10RPM / 20RPD
-    "gemini-3.1-flash-lite",   # 無料: 15RPM / 500RPD（ハイフン版）
-    "gemini-2.5-flash",        # 無料: 5RPM / 20RPD
-    "gemini-2.0-flash",        # 無料枠なし（使用不可）
+    "gemini-3.1-flash-lite-preview",  # 無料: 15RPM / 500RPD（★推奨・正式APIコード）
+    "gemini-2.5-flash-lite",          # 無料: 10RPM / 20RPD
+    "gemini-2.5-flash",               # 無料: 5RPM / 20RPD
+    "gemini-2.0-flash",               # 無料枠なし（使用不可）
 ]
-DEFAULT_GEMINI_MODEL = "Gemini 3.1 Flash Lite"
+DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
 
 
 def load_api_keys() -> dict:
@@ -519,7 +518,7 @@ with tab_settings:
         st.markdown("""
 | モデル | 無料RPM | 無料RPD | おすすめ |
 |---|---|---|---|
-| `gemini-3.1-flash-lite` | 15回/分 | **500回/日** | ★★★ |
+| `gemini-3.1-flash-lite-preview` | 15回/分 | **500回/日** | ★★★ |
 | `gemini-2.5-flash-lite` | 10回/分 | 20回/日 | ★★ |
 | `gemini-2.5-flash` | 5回/分 | 20回/日 | ★ |
 | `gemini-2.0-flash` | **0（使用不可）** | 0 | ❌ |
