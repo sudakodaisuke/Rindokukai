@@ -164,6 +164,19 @@ GEMINI_PROMPT = """あなたは医薬品製造の専門家です。
 英文: {sentence}
 訳:"""
 
+GEMINI_REORDER_PROMPT = """あなたは医薬品製造の専門家です。
+以下は英文をDeepLで翻訳した日本語訳です。この訳を、元の英文の語順に従って文節ごとに並び替えてください。
+日本語として自然な語順ではなく、英文の前から後ろへ順番に並び替え、各文節を「／」で区切って1行で出力してください。
+並び替えた訳文のみ出力し、説明は不要です。
+
+例：
+英文: In wet granulation, it is conceptually important to consider drying and cooling as an integral part of the granulation process.
+DeepL訳: 湿式造粒では、乾燥と冷却を造粒工程の不可欠な一部として位置づけることが概念的に重要です。
+並び替え後: 湿式造粒では、／概念的に重要です。／乾燥と冷却を／位置づけることが／造粒工程の不可欠な一部として
+
+英文: {sentence}
+DeepL訳: {deepl_text}
+並び替え後:"""
 
 def translate_gemini(sentence: str, api_key: str) -> str:
     try:
@@ -188,6 +201,21 @@ def translate_deepl(sentence: str, api_key: str) -> str:
         return f"[DeepL エラー: {e}]"
 
 
+def translate_deepl_reorder(sentence: str, deepl_text: str, gemini_api_key: str) -> str:
+    """DeepL訳をGeminiで英語語順・文節区切りに並び替える。"""
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=gemini_api_key)
+        model = genai.GenerativeModel("gemini-2.0-flash")
+        prompt = GEMINI_REORDER_PROMPT.format(sentence=sentence, deepl_text=deepl_text)
+        response = model.generate_content(prompt)
+        result = response.text.strip()
+        result = re.sub(r"^並び替え後[:：]\s*", "", result)
+        return result
+    except Exception as e:
+        return f"[並び替えエラー: {e}]"
+
+
 # ────────────────────────────────────────────
 # 台本テキスト生成（ダウンロード用）
 # ────────────────────────────────────────────
@@ -203,6 +231,9 @@ def build_script_text(results: list[dict]) -> str:
         if r.get("deepl"):
             lines.append("  📝 DeepL（参考訳）:")
             lines.append(f"  {r['deepl']}")
+        if r.get("deepl_reorder"):
+            lines.append("  🔄 DeepL→Gemini並び替え:")
+            lines.append(f"  {r['deepl_reorder']}")
         lines.append("")
         lines.append("-" * 60)
         lines.append("")
@@ -420,70 +451,88 @@ with tab_pages:
         st.divider()
 
         if st.button("テキストを抽出", type="primary"):
-                with st.spinner("テキストを抽出中..."):
-                    text = extract_text(selected_book["path"], int(start_page), int(end_page))
-                st.session_state.extracted_text = text
-                st.session_state.translation_results = []
-                st.success(f"ページ {start_page}〜{end_page} のテキストを抽出しました。")
+            with st.spinner("テキストを抽出中..."):
+                text = extract_text(selected_book["path"], int(start_page), int(end_page))
+            st.session_state.extracted_text = text
+            st.session_state.translation_results = []
+            st.success(f"ページ {start_page}〜{end_page} のテキストを抽出しました。")
 
-            if st.session_state.extracted_text:
-                st.subheader("抽出テキストの確認・編集")
-                st.caption("ヘッダー・フッター・図の説明文など不要なテキストは削除してから台本を作成してください。")
-                edited = st.text_area(
-                    "テキスト",
-                    value=st.session_state.extracted_text,
-                    height=400,
-                    label_visibility="collapsed",
+        if st.session_state.extracted_text:
+            st.subheader("抽出テキストの確認・編集")
+            st.caption("ヘッダー・フッター・図の説明文など不要なテキストは削除してから台本を作成してください。")
+            edited = st.text_area(
+                "テキスト",
+                value=st.session_state.extracted_text,
+                height=400,
+                label_visibility="collapsed",
+            )
+            st.session_state.extracted_text = edited
+
+            sentences = split_sentences(edited)
+            st.info(f"検出された文の数: {len(sentences)} 文")
+
+            keys = load_api_keys()
+            gemini_key = keys["gemini_api_key"]
+            deepl_key = keys["deepl_api_key"]
+
+            st.markdown("**翻訳方法を選択**")
+            col_ug, col_ud, col_ur = st.columns(3)
+            with col_ug:
+                use_gemini = st.checkbox(
+                    "🤖 Gemini（英語語順・文節訳）",
+                    value=bool(gemini_key),
+                    disabled=not gemini_key,
+                    key="use_gemini",
                 )
-                st.session_state.extracted_text = edited
+                if not gemini_key:
+                    st.caption("「設定」タブで Gemini キーを入力してください。")
+            with col_ud:
+                use_deepl = st.checkbox(
+                    "📝 DeepL（参考訳）",
+                    value=bool(deepl_key),
+                    disabled=not deepl_key,
+                    key="use_deepl",
+                )
+                if not deepl_key:
+                    st.caption("「設定」タブで DeepL キーを入力してください。")
+            with col_ur:
+                use_deepl_reorder = st.checkbox(
+                    "🔄 DeepL→Gemini並び替え",
+                    value=False,
+                    disabled=not (gemini_key and deepl_key),
+                    key="use_deepl_reorder",
+                )
+                if not (gemini_key and deepl_key):
+                    st.caption("GeminiとDeepL両方のキーが必要です。")
+                else:
+                    st.caption("DeepL訳をGeminiで英語語順に並び替え")
 
-                sentences = split_sentences(edited)
-                st.info(f"検出された文の数: {len(sentences)} 文")
-
-                keys = load_api_keys()
-                gemini_key = keys["gemini_api_key"]
-                deepl_key = keys["deepl_api_key"]
-
-                col_ug, col_ud = st.columns(2)
-                with col_ug:
-                    use_gemini = st.checkbox(
-                        "🤖 Gemini（英語語順・文節訳）",
-                        value=bool(gemini_key),
-                        disabled=not gemini_key,
-                        key="use_gemini",
-                    )
-                    if not gemini_key:
-                        st.caption("「設定」タブで Gemini API キーを入力してください。")
-                with col_ud:
-                    use_deepl = st.checkbox(
-                        "📝 DeepL（参考訳）",
-                        value=bool(deepl_key),
-                        disabled=not deepl_key,
-                        key="use_deepl",
-                    )
-                    if not deepl_key:
-                        st.caption("「設定」タブで DeepL API キーを入力してください。")
-
-                if not use_gemini and not use_deepl:
-                    st.warning("少なくとも1つの翻訳サービスを選択してください。")
-                elif st.button("🚀 台本を作成する", type="primary", disabled=not sentences):
-                    results = []
-                    progress = st.progress(0, text="翻訳中...")
-                    for i, sentence in enumerate(sentences):
-                        row = {"sentence": sentence, "gemini": "", "deepl": ""}
-                        if use_gemini:
-                            row["gemini"] = translate_gemini(sentence, gemini_key)
-                            time.sleep(0.3)  # レート制限を避けるための待機
+            if not use_gemini and not use_deepl and not use_deepl_reorder:
+                st.warning("少なくとも1つの翻訳方法を選択してください。")
+            elif st.button("🚀 台本を作成する", type="primary", disabled=not sentences):
+                results = []
+                progress = st.progress(0, text="翻訳中...")
+                for i, sentence in enumerate(sentences):
+                    row = {"sentence": sentence, "gemini": "", "deepl": "", "deepl_reorder": ""}
+                    deepl_text = ""
+                    if use_deepl or use_deepl_reorder:
+                        deepl_text = translate_deepl(sentence, deepl_key)
                         if use_deepl:
-                            row["deepl"] = translate_deepl(sentence, deepl_key)
-                        results.append(row)
-                        progress.progress(
-                            (i + 1) / len(sentences),
-                            text=f"翻訳中... {i + 1}/{len(sentences)} 文",
-                        )
-                    st.session_state.translation_results = results
-                    progress.empty()
-                    st.success("台本を作成しました。「📋 台本」タブで確認してください。")
+                            row["deepl"] = deepl_text
+                    if use_gemini:
+                        row["gemini"] = translate_gemini(sentence, gemini_key)
+                        time.sleep(0.3)
+                    if use_deepl_reorder and deepl_text:
+                        row["deepl_reorder"] = translate_deepl_reorder(sentence, deepl_text, gemini_key)
+                        time.sleep(0.3)
+                    results.append(row)
+                    progress.progress(
+                        (i + 1) / len(sentences),
+                        text=f"翻訳中... {i + 1}/{len(sentences)} 文",
+                    )
+                st.session_state.translation_results = results
+                progress.empty()
+                st.success("台本を作成しました。「📋 台本」タブで確認してください。")
 
 
 # ══════════════════════════════════════════════
@@ -515,3 +564,8 @@ with tab_script:
                 if r.get("deepl"):
                     st.markdown("📝 **DeepL（参考訳）**")
                     st.markdown(f"> {r['deepl']}")
+                if r.get("deepl_reorder"):
+                    st.markdown("🔄 **DeepL→Gemini並び替え**")
+                    parts = r["deepl_reorder"].split("／")
+                    formatted = "　　**／** ".join(p.strip() for p in parts if p.strip())
+                    st.markdown(f"> {formatted}")
