@@ -420,17 +420,54 @@ with tab_pages:
         selected_book = book_options[selected_name]
         total_pages = selected_book["total_pages"]
 
-        # ── ページ範囲スライダー ──────────────
+        # ── ページ範囲選択（スライダー＋数値入力の連動） ──
         st.markdown(f"**担当ページを選択**　（全 {total_pages} ページ）")
-        page_range = st.slider(
-            "担当ページ",
+
+        # セッション状態の初期化
+        if "range_start" not in st.session_state:
+            st.session_state.range_start = 1
+        if "range_end" not in st.session_state:
+            st.session_state.range_end = min(4, total_pages)
+
+        def on_slider_change():
+            s, e = st.session_state["slider_range"]
+            st.session_state.range_start = s
+            st.session_state.range_end = e
+
+        def on_input_change():
+            s = st.session_state.range_start
+            e = st.session_state.range_end
+            if s > e:
+                st.session_state.range_end = s
+
+        st.slider(
+            "スライダーで範囲選択",
             min_value=1,
             max_value=total_pages,
-            value=(1, min(4, total_pages)),
-            key="page_range",
+            value=(st.session_state.range_start, st.session_state.range_end),
+            key="slider_range",
+            on_change=on_slider_change,
             label_visibility="collapsed",
         )
-        start_page, end_page = page_range
+
+        col_s, col_e = st.columns(2)
+        with col_s:
+            st.number_input(
+                "開始ページ（直接入力可）",
+                min_value=1, max_value=total_pages,
+                key="range_start",
+                on_change=on_input_change,
+            )
+        with col_e:
+            st.number_input(
+                "終了ページ（直接入力可）",
+                min_value=1, max_value=total_pages,
+                key="range_end",
+                on_change=on_input_change,
+            )
+
+        start_page = st.session_state.range_start
+        end_page = st.session_state.range_end
         st.caption(f"選択中: **{start_page} 〜 {end_page} ページ**（{end_page - start_page + 1} ページ分）")
 
         # ── ページプレビュー ──────────────────
