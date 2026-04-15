@@ -153,9 +153,15 @@ def split_sentences(text: str) -> list[str]:
         text = text.replace(ab, ab.replace(".", "§"))
     # 固定幅のlookbehindのみ使用（Python 3.14対応）
     sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z])", text)
+    # セクション番号ヘッダー（例: 3.3.4 TRUE DENSITY）の前でも分割
+    # ※ "3.3.4 TRUE" のように「数字.数字 大文字2字以上」が続く場合
+    expanded = []
+    for s in sentences:
+        parts = re.split(r"(?<=[.!?])\s+(?=\d+\.\d+[\d.]*\s+[A-Z]{2,})", s)
+        expanded.extend(parts)
     # 置換を元に戻す
     result = []
-    for s in sentences:
+    for s in expanded:
         s = s.replace("§", ".").strip()
         if s and len(s) > 10:
             result.append(s)
@@ -473,13 +479,20 @@ with tab_settings:
     current_model = keys.get("gemini_model", DEFAULT_GEMINI_MODEL)
     model_idx = GEMINI_MODELS.index(current_model) if current_model in GEMINI_MODELS else 0
     selected_model = st.selectbox(
-        "Geminiモデル",
+        "Geminiモデル（候補）",
         GEMINI_MODELS,
         index=model_idx,
         key="gemini_model_select",
-        label_visibility="collapsed",
     )
-    with st.expander("モデルの無料枠について（Quota エラーが出る場合はここを確認）"):
+    custom_model = st.text_input(
+        "モデル名を直接入力（候補にない場合・エラーが出る場合）",
+        placeholder="例: gemini-3.1-flash-lite-001　または空欄のまま上の候補を使用",
+        key="custom_model_input",
+    )
+    effective_model = custom_model.strip() if custom_model.strip() else selected_model
+    st.caption(f"使用するモデル: `{effective_model}`")
+
+    with st.expander("モデルの無料枠と、モデルが見つからない場合の対処"):
         st.markdown("""
 | モデル | 無料RPM | 無料RPD | おすすめ |
 |---|---|---|---|
@@ -488,13 +501,19 @@ with tab_settings:
 | `gemini-2.5-flash` | 5回/分 | 20回/日 | ★ |
 | `gemini-2.0-flash` | **0（使用不可）** | 0 | ❌ |
 
-> **Quota エラーが続く場合：** 1日500回の上限に達した可能性があります。翌日に試してください。
+**モデルが見つからないエラーの場合:**
+1. [Google AI Studio](https://aistudio.google.com) でそのモデルを選択
+2. 「**Get code**」→「**Python**」をクリック
+3. コードの中の `model="..."` に書いてある正確な名前をコピー
+4. 上の「直接入力」欄に貼り付けて「APIキーを設定」を押す
+
+> **Quota エラーが続く場合：** 1日の上限に達した可能性があります。翌日に試してください。
 """)
 
     if st.button("APIキーを設定", type="primary"):
         new_gemini = gemini_input if gemini_input else keys["gemini_api_key"]
         new_deepl = deepl_input if deepl_input else keys["deepl_api_key"]
-        saved_to_file = save_api_keys(new_gemini, new_deepl, selected_model)
+        saved_to_file = save_api_keys(new_gemini, new_deepl, effective_model)
         if saved_to_file:
             st.success("✅ APIキーを保存しました。次回起動時も入力不要です。")
         else:
