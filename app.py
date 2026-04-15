@@ -239,8 +239,10 @@ def translate_deepl_batch(sentences: list[str], api_key: str) -> list[str]:
 
 def translate_deepl_reorder_batch(
     sentences: list[str], deepl_texts: list[str], api_key: str, model_name: str = DEFAULT_GEMINI_MODEL
-) -> list[str]:
-    """DeepL訳のリストをGeminiで英語語順・文節区切りに一括並び替え（1回のAPIリクエスト）。"""
+) -> list[dict]:
+    """DeepL訳をGeminiで並び替え、英文も同じ位置でスラッシュ区切りして返す。
+    戻り値: [{"english": "英文スラッシュ区切り", "japanese": "日本語スラッシュ区切り"}, ...]
+    """
     if not sentences:
         return []
     try:
@@ -252,24 +254,28 @@ def translate_deepl_reorder_batch(
         )
         prompt = f"""あなたは医薬品製造の専門家です。
 以下の各英文とDeepL訳のペアについて、DeepL訳を元の英文の語順に従って文節ごとに並び替えてください。
-各文節を「／」で区切り、番号と並び替え後の訳のみを出力してください。
+さらに、英文も同じ文節の区切り位置でスラッシュ区切りにしてください。
 
-例：
-【1】英文: In wet granulation, it is conceptually important to consider drying and cooling as an integral part of the granulation process.
-　　DeepL訳: 湿式造粒では、乾燥と冷却を造粒工程の不可欠な一部として位置づけることが概念的に重要です。
-→ 【1】湿式造粒では、／概念的に重要です。／乾燥と冷却を／位置づけることが／造粒工程の不可欠な一部として
+出力形式（番号・英・日のみ、説明不要）：
+【1】
+英: In wet granulation, ／it is conceptually important ／to consider drying and cooling ／as an integral part ／of the granulation process.
+日: 湿式造粒では、／概念的に重要です。／乾燥と冷却を／位置づけることが／造粒工程の不可欠な一部として
 
 {numbered}"""
         response = model.generate_content(prompt)
         result_text = response.text.strip()
-        results = [""] * len(sentences)
-        for match in re.finditer(r"【(\d+)】(.+?)(?=【\d+】|$)", result_text, re.DOTALL):
+        results = [{"english": "", "japanese": ""} for _ in sentences]
+        block_pat = re.compile(
+            r"【(\d+)】\s*\n英[:：]\s*(.+?)\n日[:：]\s*(.+?)(?=\n?【\d+】|$)", re.DOTALL
+        )
+        for match in block_pat.finditer(result_text):
             idx = int(match.group(1)) - 1
             if 0 <= idx < len(sentences):
-                results[idx] = match.group(2).strip()
+                results[idx]["english"] = match.group(2).strip()
+                results[idx]["japanese"] = match.group(3).strip()
         return results
     except Exception as e:
-        return [f"[並び替えバッチエラー: {e}]"] * len(sentences)
+        return [{"english": "", "japanese": f"[並び替えバッチエラー: {e}]"}] * len(sentences)
 
 
 def translate_gemini(sentence: str, api_key: str, model_name: str = DEFAULT_GEMINI_MODEL) -> str:
@@ -349,7 +355,9 @@ def build_script_text(results: list[dict]) -> str:
             lines.append(f"  {r['deepl']}")
         if r.get("deepl_reorder"):
             lines.append("  🔄 DeepL→Gemini並び替え:")
-            lines.append(f"  {r['deepl_reorder']}")
+            if r.get("deepl_reorder_en"):
+                lines.append(f"  [英] {r['deepl_reorder_en']}")
+            lines.append(f"  [日] {r['deepl_reorder']}")
         lines.append("")
         lines.append("-" * 60)
         lines.append("")
@@ -726,7 +734,7 @@ with tab_pages:
             else:
                 st.info(f"APIリクエスト数の目安: Gemini {'1回（まとめて送信）' if use_gemini else '0回'} / DeepL {'1回（まとめて送信）' if (use_deepl or use_deepl_reorder) else '0回'} + 並び替え {'1回' if use_deepl_reorder else '0回'}")
                 if st.button("🚀 台本を作成する", type="primary", disabled=not sentences):
-                    results = [{"sentence": s, "gemini": "", "deepl": "", "deepl_reorder": ""} for s in sentences]
+                    results = [{"sentence": s, "gemini": "", "deepl": "", "deepl_reorder": "", "deepl_reorder_en": ""} for s in sentences]
                     progress = st.progress(0, text="翻訳中...")
 
                     # DeepLバッチ翻訳（1回で全文）
@@ -748,9 +756,10 @@ with tab_pages:
                     # DeepL→Gemini並び替え（1回で全文）
                     if use_deepl_reorder:
                         progress.progress(0.7, text="Gemini 並び替え中（まとめて1回送信）...")
-                        reorder_texts = translate_deepl_reorder_batch(sentences, deepl_texts, gemini_key, gemini_model)
+                        reorder_dicts = translate_deepl_reorder_batch(sentences, deepl_texts, gemini_key, gemini_model)
                         for i, r in enumerate(results):
-                            r["deepl_reorder"] = reorder_texts[i]
+                            r["deepl_reorder"] = reorder_dicts[i]["japanese"]
+                            r["deepl_reorder_en"] = reorder_dicts[i]["english"]
 
                     st.session_state.translation_results = results
                     progress.empty()
@@ -788,6 +797,10 @@ with tab_script:
                     st.markdown(f"> {r['deepl']}")
                 if r.get("deepl_reorder"):
                     st.markdown("🔄 **DeepL→Gemini並び替え**")
-                    parts = r["deepl_reorder"].split("／")
-                    formatted = "　　**／** ".join(p.strip() for p in parts if p.strip())
-                    st.markdown(f"> {formatted}")
+                    if r.get("deepl_reorder_en"):
+                        en_parts = r["deepl_reorder_en"].split("／")
+                        en_formatted = "　**／** ".join(p.strip() for p in en_parts if p.strip())
+                        st.markdown(f"> 🇬🇧 {en_formatted}")
+                    ja_parts = r["deepl_reorder"].split("／")
+                    ja_formatted = "　**／** ".join(p.strip() for p in ja_parts if p.strip())
+                    st.markdown(f"> 🇯🇵 {ja_formatted}")
