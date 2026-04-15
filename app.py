@@ -97,6 +97,18 @@ def scan_books() -> list[dict]:
     return books
 
 
+@st.cache_data
+def render_page_image(pdf_path: str, page_num: int) -> bytes:
+    """PDFの指定ページを画像として返す（キャッシュ付き）。"""
+    doc = fitz.open(pdf_path)
+    page = doc[page_num - 1]
+    mat = fitz.Matrix(1.5, 1.5)
+    pix = page.get_pixmap(matrix=mat)
+    img_bytes = pix.tobytes("png")
+    doc.close()
+    return img_bytes
+
+
 def extract_text(pdf_path: str, start_page: int, end_page: int) -> str:
     """指定ページ範囲のテキストを抽出（ページ番号は1始まり）。"""
     doc = fitz.open(pdf_path)
@@ -376,26 +388,38 @@ with tab_pages:
         selected_name = st.selectbox("本を選択", list(book_options.keys()), key="book_select")
         selected_book = book_options[selected_name]
         total_pages = selected_book["total_pages"]
-        st.caption(f"総ページ数: {total_pages} ページ")
 
-        col_s, col_e = st.columns(2)
-        with col_s:
-            start_page = st.number_input(
-                "開始ページ（本のページ番号）",
-                min_value=1, max_value=total_pages, value=1,
-                key="start_page",
-            )
-        with col_e:
-            end_page = st.number_input(
-                "終了ページ（本のページ番号）",
-                min_value=1, max_value=total_pages, value=min(4, total_pages),
-                key="end_page",
-            )
+        # ── ページ範囲スライダー ──────────────
+        st.markdown(f"**担当ページを選択**　（全 {total_pages} ページ）")
+        page_range = st.slider(
+            "担当ページ",
+            min_value=1,
+            max_value=total_pages,
+            value=(1, min(4, total_pages)),
+            key="page_range",
+            label_visibility="collapsed",
+        )
+        start_page, end_page = page_range
+        st.caption(f"選択中: **{start_page} 〜 {end_page} ページ**（{end_page - start_page + 1} ページ分）")
 
-        if end_page < start_page:
-            st.error("終了ページは開始ページ以上にしてください。")
-        else:
-            if st.button("テキストを抽出", type="primary"):
+        # ── ページプレビュー ──────────────────
+        num_selected = end_page - start_page + 1
+        MAX_PREVIEW = 6
+        preview_pages = list(range(start_page, min(end_page + 1, start_page + MAX_PREVIEW)))
+
+        st.markdown("**ページプレビュー**")
+        if num_selected > MAX_PREVIEW:
+            st.caption(f"最初の {MAX_PREVIEW} ページを表示しています。")
+
+        cols = st.columns(min(num_selected, 3))
+        for i, pnum in enumerate(preview_pages):
+            with cols[i % 3]:
+                img = render_page_image(selected_book["path"], pnum)
+                st.image(img, caption=f"p. {pnum}", use_container_width=True)
+
+        st.divider()
+
+        if st.button("テキストを抽出", type="primary"):
                 with st.spinner("テキストを抽出中..."):
                     text = extract_text(selected_book["path"], int(start_page), int(end_page))
                 st.session_state.extracted_text = text
