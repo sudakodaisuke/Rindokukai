@@ -29,13 +29,12 @@ def is_local() -> bool:
 
 
 GEMINI_MODELS = [
-    "gemini-2.0-flash-lite",   # 無料枠あり・軽量高速（おすすめ）
-    "gemini-2.0-flash",        # 無料枠あり・標準
-    "gemini-2.5-flash",        # 無料枠あり・高精度
-    "gemini-2.5-pro",          # 高精度（無料枠は限定的）
-    "gemini-1.5-flash",        # 旧版（後方互換）
+    "gemini-3.1-flash-lite",   # 無料: 15RPM / 500RPD（最もおすすめ）
+    "gemini-2.5-flash-lite",   # 無料: 10RPM / 20RPD
+    "gemini-2.5-flash",        # 無料: 5RPM / 20RPD
+    "gemini-2.0-flash",        # 無料枠なし（使用不可）
 ]
-DEFAULT_GEMINI_MODEL = "gemini-2.0-flash-lite"
+DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
 
 
 def load_api_keys() -> dict:
@@ -480,18 +479,16 @@ with tab_settings:
         key="gemini_model_select",
         label_visibility="collapsed",
     )
-    with st.expander("モデルが見つからない / Quota エラーが出る場合はここを確認"):
+    with st.expander("モデルの無料枠について（Quota エラーが出る場合はここを確認）"):
         st.markdown("""
-| モデル | 特徴 | おすすめ |
-|---|---|---|
-| `gemini-2.0-flash-lite` | 軽量・高速・無料枠あり | ★★★ |
-| `gemini-2.0-flash` | 標準・無料枠あり | ★★ |
-| `gemini-2.5-flash` | 高精度・無料枠あり | ★★ |
-| `gemini-2.5-pro` | 最高精度（無料枠は限定） | ★ |
-| `gemini-1.5-flash` | 旧版（後方互換） | △ |
+| モデル | 無料RPM | 無料RPD | おすすめ |
+|---|---|---|---|
+| `gemini-3.1-flash-lite` | 15回/分 | **500回/日** | ★★★ |
+| `gemini-2.5-flash-lite` | 10回/分 | 20回/日 | ★★ |
+| `gemini-2.5-flash` | 5回/分 | 20回/日 | ★ |
+| `gemini-2.0-flash` | **0（使用不可）** | 0 | ❌ |
 
-> エラーが出る場合は **`gemini-2.0-flash-lite`** を試してください。
-> Quota エラーは時間をおくと解消されることがあります（1分待つ or 翌日）。
+> **Quota エラーが続く場合：** 1日500回の上限に達した可能性があります。翌日に試してください。
 """)
 
     if st.button("APIキーを設定", type="primary"):
