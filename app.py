@@ -769,7 +769,7 @@ with tab_pages:
             with col_ur:
                 use_deepl_reorder = st.checkbox(
                     "🔄 DeepL→Gemini並び替え",
-                    value=False,
+                    value=bool(gemini_key and deepl_key),
                     disabled=not (gemini_key and deepl_key),
                     key="use_deepl_reorder",
                 )
