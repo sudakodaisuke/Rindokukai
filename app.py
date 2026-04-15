@@ -191,6 +191,87 @@ DeepL訳: 湿式造粒では、乾燥と冷却を造粒工程の不可欠な一�
 DeepL訳: {deepl_text}
 並び替え後:"""
 
+
+def translate_gemini_batch(sentences: list[str], api_key: str, model_name: str = DEFAULT_GEMINI_MODEL) -> list[str]:
+    """複数の文を1回のAPIリクエストでまとめて翻訳する（英語語順・文節訳）。"""
+    if not sentences:
+        return []
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(model_name)
+        numbered = "\n".join(f"【{i+1}】{s}" for i, s in enumerate(sentences))
+        prompt = f"""あなたは医薬品製造の専門家です。
+以下の英文リストを、英語の語順に従って文節ごとに訳してください。
+日本語として自然な語順ではなく、英文の前から後ろへ順番に訳し、各文節を「／」で区切ってください。
+番号と訳のみを出力し、説明は不要です。
+
+例：
+【1】In wet granulation, it is conceptually important to consider drying and cooling as an integral part of the granulation process.
+→ 【1】湿式造粒では、／概念的に重要である。／乾燥と冷却を／位置づけることが／造粒工程の不可欠な一部として
+
+英文リスト：
+{numbered}"""
+        response = model.generate_content(prompt)
+        result_text = response.text.strip()
+        results = [""] * len(sentences)
+        for match in re.finditer(r"【(\d+)】(.+?)(?=【\d+】|$)", result_text, re.DOTALL):
+            idx = int(match.group(1)) - 1
+            if 0 <= idx < len(sentences):
+                results[idx] = match.group(2).strip()
+        return results
+    except Exception as e:
+        return [f"[Gemini バッチエラー: {e}]"] * len(sentences)
+
+
+def translate_deepl_batch(sentences: list[str], api_key: str) -> list[str]:
+    """複数の文を1回のAPIリクエストでまとめてDeepL翻訳する。"""
+    if not sentences:
+        return []
+    try:
+        import deepl
+        translator = deepl.Translator(api_key)
+        results = translator.translate_text(sentences, target_lang="JA")
+        return [r.text for r in results]
+    except Exception as e:
+        return [f"[DeepL バッチエラー: {e}]"] * len(sentences)
+
+
+def translate_deepl_reorder_batch(
+    sentences: list[str], deepl_texts: list[str], api_key: str, model_name: str = DEFAULT_GEMINI_MODEL
+) -> list[str]:
+    """DeepL訳のリストをGeminiで英語語順・文節区切りに一括並び替え（1回のAPIリクエスト）。"""
+    if not sentences:
+        return []
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(model_name)
+        numbered = "\n".join(
+            f"【{i+1}】英文: {s}\n　　DeepL訳: {d}" for i, (s, d) in enumerate(zip(sentences, deepl_texts))
+        )
+        prompt = f"""あなたは医薬品製造の専門家です。
+以下の各英文とDeepL訳のペアについて、DeepL訳を元の英文の語順に従って文節ごとに並び替えてください。
+各文節を「／」で区切り、番号と並び替え後の訳のみを出力してください。
+
+例：
+【1】英文: In wet granulation, it is conceptually important to consider drying and cooling as an integral part of the granulation process.
+　　DeepL訳: 湿式造粒では、乾燥と冷却を造粒工程の不可欠な一部として位置づけることが概念的に重要です。
+→ 【1】湿式造粒では、／概念的に重要です。／乾燥と冷却を／位置づけることが／造粒工程の不可欠な一部として
+
+{numbered}"""
+        response = model.generate_content(prompt)
+        result_text = response.text.strip()
+        results = [""] * len(sentences)
+        for match in re.finditer(r"【(\d+)】(.+?)(?=【\d+】|$)", result_text, re.DOTALL):
+            idx = int(match.group(1)) - 1
+            if 0 <= idx < len(sentences):
+                results[idx] = match.group(2).strip()
+        return results
+    except Exception as e:
+        return [f"[並び替えバッチエラー: {e}]"] * len(sentences)
+
+
 def translate_gemini(sentence: str, api_key: str, model_name: str = DEFAULT_GEMINI_MODEL) -> str:
     try:
         import google.generativeai as genai
@@ -642,30 +723,38 @@ with tab_pages:
 
             if not use_gemini and not use_deepl and not use_deepl_reorder:
                 st.warning("少なくとも1つの翻訳方法を選択してください。")
-            elif st.button("🚀 台本を作成する", type="primary", disabled=not sentences):
-                results = []
-                progress = st.progress(0, text="翻訳中...")
-                for i, sentence in enumerate(sentences):
-                    row = {"sentence": sentence, "gemini": "", "deepl": "", "deepl_reorder": ""}
-                    deepl_text = ""
+            else:
+                st.info(f"APIリクエスト数の目安: Gemini {'1回（まとめて送信）' if use_gemini else '0回'} / DeepL {'1回（まとめて送信）' if (use_deepl or use_deepl_reorder) else '0回'} + 並び替え {'1回' if use_deepl_reorder else '0回'}")
+                if st.button("🚀 台本を作成する", type="primary", disabled=not sentences):
+                    results = [{"sentence": s, "gemini": "", "deepl": "", "deepl_reorder": ""} for s in sentences]
+                    progress = st.progress(0, text="翻訳中...")
+
+                    # DeepLバッチ翻訳（1回で全文）
+                    deepl_texts = [""] * len(sentences)
                     if use_deepl or use_deepl_reorder:
-                        deepl_text = translate_deepl(sentence, deepl_key)
+                        progress.progress(0.1, text="DeepL 翻訳中（まとめて1回送信）...")
+                        deepl_texts = translate_deepl_batch(sentences, deepl_key)
                         if use_deepl:
-                            row["deepl"] = deepl_text
+                            for i, r in enumerate(results):
+                                r["deepl"] = deepl_texts[i]
+
+                    # Geminiバッチ翻訳（1回で全文）
                     if use_gemini:
-                        row["gemini"] = translate_gemini(sentence, gemini_key, gemini_model)
-                        time.sleep(0.3)
-                    if use_deepl_reorder and deepl_text:
-                        row["deepl_reorder"] = translate_deepl_reorder(sentence, deepl_text, gemini_key, gemini_model)
-                        time.sleep(0.3)
-                    results.append(row)
-                    progress.progress(
-                        (i + 1) / len(sentences),
-                        text=f"翻訳中... {i + 1}/{len(sentences)} 文",
-                    )
-                st.session_state.translation_results = results
-                progress.empty()
-                st.success("台本を作成しました。「📋 台本」タブで確認してください。")
+                        progress.progress(0.4, text="Gemini 翻訳中（まとめて1回送信）...")
+                        gemini_texts = translate_gemini_batch(sentences, gemini_key, gemini_model)
+                        for i, r in enumerate(results):
+                            r["gemini"] = gemini_texts[i]
+
+                    # DeepL→Gemini並び替え（1回で全文）
+                    if use_deepl_reorder:
+                        progress.progress(0.7, text="Gemini 並び替え中（まとめて1回送信）...")
+                        reorder_texts = translate_deepl_reorder_batch(sentences, deepl_texts, gemini_key, gemini_model)
+                        for i, r in enumerate(results):
+                            r["deepl_reorder"] = reorder_texts[i]
+
+                    st.session_state.translation_results = results
+                    progress.empty()
+                    st.success("台本を作成しました。「📋 台本」タブで確認してください。")
 
 
 # ══════════════════════════════════════════════
