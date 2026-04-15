@@ -192,8 +192,10 @@ DeepL訳: {deepl_text}
 並び替え後:"""
 
 
-def translate_gemini_batch(sentences: list[str], api_key: str, model_name: str = DEFAULT_GEMINI_MODEL) -> list[str]:
-    """複数の文を1回のAPIリクエストでまとめて翻訳する（英語語順・文節訳）。"""
+def translate_gemini_batch(sentences: list[str], api_key: str, model_name: str = DEFAULT_GEMINI_MODEL) -> list[dict]:
+    """複数の文を1回のAPIリクエストでまとめて翻訳する（英語語順・文節訳）。
+    戻り値: [{"english": "英文スラッシュ区切り", "japanese": "日本語スラッシュ区切り"}, ...]
+    """
     if not sentences:
         return []
     try:
@@ -204,24 +206,29 @@ def translate_gemini_batch(sentences: list[str], api_key: str, model_name: str =
         prompt = f"""あなたは医薬品製造の専門家です。
 以下の英文リストを、英語の語順に従って文節ごとに訳してください。
 日本語として自然な語順ではなく、英文の前から後ろへ順番に訳し、各文節を「／」で区切ってください。
-番号と訳のみを出力し、説明は不要です。
+さらに、英文も同じ文節の区切り位置でスラッシュ区切りにしてください。
 
-例：
-【1】In wet granulation, it is conceptually important to consider drying and cooling as an integral part of the granulation process.
-→ 【1】湿式造粒では、／概念的に重要である。／乾燥と冷却を／位置づけることが／造粒工程の不可欠な一部として
+出力形式（番号・英・日のみ、説明不要）：
+【1】
+英: In wet granulation, ／it is conceptually important ／to consider drying and cooling ／as an integral part ／of the granulation process.
+日: 湿式造粒では、／概念的に重要である。／乾燥と冷却を／位置づけることが／造粒工程の不可欠な一部として
 
 英文リスト：
 {numbered}"""
         response = model.generate_content(prompt)
         result_text = response.text.strip()
-        results = [""] * len(sentences)
-        for match in re.finditer(r"【(\d+)】(.+?)(?=【\d+】|$)", result_text, re.DOTALL):
+        results = [{"english": "", "japanese": ""} for _ in sentences]
+        block_pat = re.compile(
+            r"【(\d+)】\s*\n英[:：]\s*(.+?)\n日[:：]\s*(.+?)(?=\n?【\d+】|$)", re.DOTALL
+        )
+        for match in block_pat.finditer(result_text):
             idx = int(match.group(1)) - 1
             if 0 <= idx < len(sentences):
-                results[idx] = match.group(2).strip()
+                results[idx]["english"] = match.group(2).strip()
+                results[idx]["japanese"] = match.group(3).strip()
         return results
     except Exception as e:
-        return [f"[Gemini バッチエラー: {e}]"] * len(sentences)
+        return [{"english": "", "japanese": f"[Gemini バッチエラー: {e}]"}] * len(sentences)
 
 
 def translate_deepl_batch(sentences: list[str], api_key: str) -> list[str]:
@@ -342,18 +349,30 @@ def translate_deepl_reorder(sentence: str, deepl_text: str, gemini_api_key: str,
 # 台本テキスト生成（ダウンロード用）
 # ────────────────────────────────────────────
 
-def build_script_text(results: list[dict]) -> str:
+DOWNLOAD_MODE_LABELS = {
+    "gemini":        "🤖 Gemini（英語語順訳）",
+    "deepl":         "📝 DeepL（参考訳）",
+    "deepl_reorder": "🔄 DeepL→Gemini並び替え",
+}
+
+
+def build_script_text(results: list[dict], modes: list[str] | None = None) -> str:
+    """台本テキストを生成する。modes で含める翻訳種別を指定（None のとき全種別）。"""
+    if modes is None:
+        modes = list(DOWNLOAD_MODE_LABELS.keys())
     lines = ["=" * 60, "輪読会 台本", "=" * 60, ""]
     for i, r in enumerate(results, 1):
         lines.append(f"【{i}】{r['sentence']}")
         lines.append("")
-        if r.get("gemini"):
+        if "gemini" in modes and r.get("gemini"):
             lines.append("  🤖 Gemini（英語語順訳）:")
-            lines.append(f"  {r['gemini']}")
-        if r.get("deepl"):
+            if r.get("gemini_en"):
+                lines.append(f"  [英] {r['gemini_en']}")
+            lines.append(f"  [日] {r['gemini']}")
+        if "deepl" in modes and r.get("deepl"):
             lines.append("  📝 DeepL（参考訳）:")
             lines.append(f"  {r['deepl']}")
-        if r.get("deepl_reorder"):
+        if "deepl_reorder" in modes and r.get("deepl_reorder"):
             lines.append("  🔄 DeepL→Gemini並び替え:")
             if r.get("deepl_reorder_en"):
                 lines.append(f"  [英] {r['deepl_reorder_en']}")
@@ -734,7 +753,7 @@ with tab_pages:
             else:
                 st.info(f"APIリクエスト数の目安: Gemini {'1回（まとめて送信）' if use_gemini else '0回'} / DeepL {'1回（まとめて送信）' if (use_deepl or use_deepl_reorder) else '0回'} + 並び替え {'1回' if use_deepl_reorder else '0回'}")
                 if st.button("🚀 台本を作成する", type="primary", disabled=not sentences):
-                    results = [{"sentence": s, "gemini": "", "deepl": "", "deepl_reorder": "", "deepl_reorder_en": ""} for s in sentences]
+                    results = [{"sentence": s, "gemini": "", "gemini_en": "", "deepl": "", "deepl_reorder": "", "deepl_reorder_en": ""} for s in sentences]
                     progress = st.progress(0, text="翻訳中...")
 
                     # DeepLバッチ翻訳（1回で全文）
@@ -749,9 +768,10 @@ with tab_pages:
                     # Geminiバッチ翻訳（1回で全文）
                     if use_gemini:
                         progress.progress(0.4, text="Gemini 翻訳中（まとめて1回送信）...")
-                        gemini_texts = translate_gemini_batch(sentences, gemini_key, gemini_model)
+                        gemini_dicts = translate_gemini_batch(sentences, gemini_key, gemini_model)
                         for i, r in enumerate(results):
-                            r["gemini"] = gemini_texts[i]
+                            r["gemini"] = gemini_dicts[i]["japanese"]
+                            r["gemini_en"] = gemini_dicts[i]["english"]
 
                     # DeepL→Gemini並び替え（1回で全文）
                     if use_deepl_reorder:
@@ -776,12 +796,24 @@ with tab_script:
     if not results:
         st.info("「📄 ページ選択・テキスト確認」タブで台本を作成してください。")
     else:
-        script_text = build_script_text(results)
+        # ── ダウンロード形式の選択 ──────────────
+        available_modes = [k for k, _ in DOWNLOAD_MODE_LABELS.items() if any(r.get(k) for r in results)]
+        selected_labels = st.multiselect(
+            "ダウンロードに含める訳を選択",
+            options=[DOWNLOAD_MODE_LABELS[k] for k in available_modes],
+            default=[DOWNLOAD_MODE_LABELS[k] for k in available_modes],
+            key="download_modes",
+        )
+        label_to_key = {v: k for k, v in DOWNLOAD_MODE_LABELS.items()}
+        selected_modes = [label_to_key[lbl] for lbl in selected_labels if lbl in label_to_key]
+
+        script_text = build_script_text(results, selected_modes if selected_modes else None)
         st.download_button(
             "📥 台本をテキストファイルでダウンロード",
             data=script_text.encode("utf-8"),
             file_name="rindokukai_script.txt",
             mime="text/plain",
+            disabled=not selected_modes,
         )
         st.divider()
         for i, r in enumerate(results, 1):
@@ -789,9 +821,13 @@ with tab_script:
                 st.markdown(f"**【{i}】** {r['sentence']}")
                 if r.get("gemini"):
                     st.markdown("🤖 **Gemini（英語語順訳）**")
-                    parts = r["gemini"].split("／")
-                    formatted = "　　**／** ".join(p.strip() for p in parts if p.strip())
-                    st.markdown(f"> {formatted}")
+                    if r.get("gemini_en"):
+                        en_parts = r["gemini_en"].split("／")
+                        en_formatted = "　**／** ".join(p.strip() for p in en_parts if p.strip())
+                        st.markdown(f"> 🇬🇧 {en_formatted}")
+                    ja_parts = r["gemini"].split("／")
+                    ja_formatted = "　**／** ".join(p.strip() for p in ja_parts if p.strip())
+                    st.markdown(f"> 🇯🇵 {ja_formatted}")
                 if r.get("deepl"):
                     st.markdown("📝 **DeepL（参考訳）**")
                     st.markdown(f"> {r['deepl']}")
