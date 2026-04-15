@@ -117,11 +117,23 @@ def split_sentences(text: str) -> list[str]:
     text = re.sub(r"-\n(\w)", r"\1", text)
     text = re.sub(r"\n+", " ", text)
     text = re.sub(r" {2,}", " ", text).strip()
-    # 略語の後では分割しない
-    abbr = r"(?<!\b(?:e\.g|i\.e|etc|Fig|Vol|No|Dr|Mr|Mrs|Ms|Prof|St|vs|cf|al|ca|approx|dept|est|incl|excl|ref|resp))"
-    pattern = abbr + r"(?<=[.!?])\s+(?=[A-Z])"
-    sentences = re.split(pattern, text)
-    return [s.strip() for s in sentences if s.strip() and len(s.strip()) > 10]
+    # 略語のピリオドを一時的に置換して誤分割を防ぐ
+    abbrevs = [
+        "e.g.", "i.e.", "etc.", "Fig.", "Vol.", "No.", "Dr.", "Mr.",
+        "Mrs.", "Ms.", "Prof.", "St.", "vs.", "cf.", "al.", "ca.",
+        "approx.", "dept.", "est.", "incl.", "excl.", "ref.", "resp.",
+    ]
+    for ab in abbrevs:
+        text = text.replace(ab, ab.replace(".", "§"))
+    # 固定幅のlookbehindのみ使用（Python 3.14対応）
+    sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z])", text)
+    # 置換を元に戻す
+    result = []
+    for s in sentences:
+        s = s.replace("§", ".").strip()
+        if s and len(s) > 10:
+            result.append(s)
+    return result
 
 
 # ────────────────────────────────────────────
