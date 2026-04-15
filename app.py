@@ -34,7 +34,7 @@ GEMINI_MODELS = [
     "gemini-2.5-flash",        # 無料: 5RPM / 20RPD
     "gemini-2.0-flash",        # 無料枠なし（使用不可）
 ]
-DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite"
 
 
 def load_api_keys() -> dict:
