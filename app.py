@@ -547,22 +547,31 @@ with tab_settings:
     effective_model = custom_model.strip() if custom_model.strip() else selected_model
     st.caption(f"使用するモデル: `{effective_model}`")
 
-    with st.expander("モデルの無料枠と、モデルが見つからない場合の対処"):
+    st.info(
+        "💡 Gemini API はモデルごとに **1分あたりの利用回数（RPM）** に上限があります。"
+        "うまくいかない・止まる場合は **別のモデルに切り替えて**「確定して保存する」を押してみてください。"
+        "制限は **1分後に自動回復** します。"
+    )
+
+    with st.expander("📊 モデルの無料枠とエラー時の対処"):
         st.markdown("""
-| モデル | 無料RPM | 無料RPD | おすすめ |
+**RPM（1分あたりの上限回数）について**
+Gemini API は無料で使える回数が1分間に制限されています。
+超えると応答が止まりますが、**1分待てば自動的に回復**します。
+
+| モデル | RPM（1分） | 安定性 | おすすめ |
 |---|---|---|---|
-| `gemini-3.1-flash-lite-preview` | 15回/分 | **500回/日** | ★★★ |
-| `gemini-2.5-flash-lite` | 10回/分 | 20回/日 | ★★ |
-| `gemini-2.5-flash` | 5回/分 | 20回/日 | ★ |
-| `gemini-2.0-flash` | **0（使用不可）** | 0 | ❌ |
+| `gemini-2.5-flash-lite` | 10回/分 | ⭐ 安定 | ★★★ デフォルト |
+| `gemini-3.1-flash-lite-preview` | 15回/分 | ⚠️ プレビュー版・超過しやすい | ★★ |
+| `gemini-2.5-flash` | 5回/分 | ⭐ 安定 | ★ |
+| `gemini-2.0-flash` | **0（使用不可）** | ❌ | ❌ |
 
-**モデルが見つからないエラーの場合:**
-1. [Google AI Studio](https://aistudio.google.com) でそのモデルを選択
-2. 「**Get code**」→「**Python**」をクリック
-3. コードの中の `model="..."` に書いてある正確な名前をコピー
-4. 上の「直接入力」欄に貼り付けて「APIキーを設定」を押す
+**止まる・エラーになる場合：**
+1. 別のモデルを選んで「確定して保存する」を押す
+2. 1分ほど待ってから再度「台本を作成する」を押す
 
-> **Quota エラーが続く場合：** 1日の上限に達した可能性があります。翌日に試してください。
+**モデル名エラーの場合：**
+[Google AI Studio](https://aistudio.google.com) → モデル選択 → 「Get code」→「Python」でコード内の正確な名前を確認できます。
 """)
 
     st.warning("⚠️ APIキーやモデルを変更したら、必ず下のボタンを押してください！")
