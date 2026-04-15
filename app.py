@@ -28,9 +28,18 @@ def is_local() -> bool:
     return not os.path.exists("/mount/src")
 
 
+GEMINI_MODELS = [
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+    "gemini-2.5-pro-preview-03-25",
+    "gemini-pro",
+]
+DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
+
+
 def load_api_keys() -> dict:
     """APIキーをセッション → config.json（ローカルのみ）の順で読み込む。"""
-    keys = {"gemini_api_key": "", "deepl_api_key": ""}
+    keys = {"gemini_api_key": "", "deepl_api_key": "", "gemini_model": DEFAULT_GEMINI_MODEL}
     # ローカル実行時のみ config.json から読み込む（クラウドでは読まない）
     if is_local() and os.path.exists(CONFIG_PATH):
         try:
@@ -48,7 +57,7 @@ def load_api_keys() -> dict:
     return keys
 
 
-def save_api_keys(gemini_key: str, deepl_key: str) -> bool:
+def save_api_keys(gemini_key: str, deepl_key: str, gemini_model: str = DEFAULT_GEMINI_MODEL) -> bool:
     """APIキーを保存する。
     - 常に: セッションステートに保存（ユーザーごとに独立・他のユーザーからは見えない）
     - ローカルのみ: config.json にも保存（次回起動時に再入力不要）
@@ -56,6 +65,7 @@ def save_api_keys(gemini_key: str, deepl_key: str) -> bool:
     # セッションステートに保存（クラウド・ローカル共通・安全）
     st.session_state["gemini_api_key"] = gemini_key
     st.session_state["deepl_api_key"] = deepl_key
+    st.session_state["gemini_model"] = gemini_model
     # ローカルのみ config.json にも保存
     if is_local():
         data = {}
@@ -67,6 +77,7 @@ def save_api_keys(gemini_key: str, deepl_key: str) -> bool:
                 pass
         data["gemini_api_key"] = gemini_key
         data["deepl_api_key"] = deepl_key
+        data["gemini_model"] = gemini_model
         try:
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -178,17 +189,39 @@ DeepL訳: 湿式造粒では、乾燥と冷却を造粒工程の不可欠な一�
 DeepL訳: {deepl_text}
 並び替え後:"""
 
-def translate_gemini(sentence: str, api_key: str) -> str:
+def translate_gemini(sentence: str, api_key: str, model_name: str = DEFAULT_GEMINI_MODEL) -> str:
     try:
         import google.generativeai as genai
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.0-flash")
+        model = genai.GenerativeModel(model_name)
         response = model.generate_content(GEMINI_PROMPT.format(sentence=sentence))
         result = response.text.strip()
         result = re.sub(r"^訳[:：]\s*", "", result)
         return result
     except Exception as e:
         return f"[Gemini エラー: {e}]"
+
+
+def read_page_figures(pdf_path: str, page_num: int, api_key: str, model_name: str = DEFAULT_GEMINI_MODEL) -> str:
+    """Gemini Vision APIでページ内の図・数式・表を読み取る。"""
+    try:
+        import google.generativeai as genai
+        img_bytes = render_page_image(pdf_path, page_num)
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(model_name)
+        prompt = """この医薬品ハンドブックのページに含まれる図、グラフ、数式、表を全て抽出・説明してください。
+本文テキストは無視して、以下のものだけに集中してください：
+- 数式：できるだけそのまま文字で表現（例: k = A·exp(-Ea/RT)）
+- グラフ・図：タイトル、軸ラベル、内容を日本語で説明
+- 表：内容をテキストで再現
+図表・数式が何もない場合は「このページに図表・数式はありません」とだけ出力してください。"""
+        response = model.generate_content([
+            prompt,
+            {"mime_type": "image/png", "data": img_bytes},
+        ])
+        return response.text.strip()
+    except Exception as e:
+        return f"[読み取りエラー: {e}]"
 
 
 def translate_deepl(sentence: str, api_key: str) -> str:
@@ -201,12 +234,12 @@ def translate_deepl(sentence: str, api_key: str) -> str:
         return f"[DeepL エラー: {e}]"
 
 
-def translate_deepl_reorder(sentence: str, deepl_text: str, gemini_api_key: str) -> str:
+def translate_deepl_reorder(sentence: str, deepl_text: str, gemini_api_key: str, model_name: str = DEFAULT_GEMINI_MODEL) -> str:
     """DeepL訳をGeminiで英語語順・文節区切りに並び替える。"""
     try:
         import google.generativeai as genai
         genai.configure(api_key=gemini_api_key)
-        model = genai.GenerativeModel("gemini-2.0-flash")
+        model = genai.GenerativeModel(model_name)
         prompt = GEMINI_REORDER_PROMPT.format(sentence=sentence, deepl_text=deepl_text)
         response = model.generate_content(prompt)
         result = response.text.strip()
@@ -315,10 +348,32 @@ with tab_settings:
 > 例: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx`
 """)
 
+    st.markdown("**🤖 Gemini モデル**")
+    current_model = keys.get("gemini_model", DEFAULT_GEMINI_MODEL)
+    model_idx = GEMINI_MODELS.index(current_model) if current_model in GEMINI_MODELS else 0
+    selected_model = st.selectbox(
+        "Geminiモデル",
+        GEMINI_MODELS,
+        index=model_idx,
+        key="gemini_model_select",
+        label_visibility="collapsed",
+    )
+    with st.expander("モデルについて（Quota エラーが出る場合はここを変更）"):
+        st.markdown("""
+| モデル | 特徴 |
+|---|---|
+| `gemini-2.0-flash` | 最新・高速・無料（推奨） |
+| `gemini-1.5-flash` | 旧版・広く使える |
+| `gemini-2.5-pro-preview-03-25` | 最高精度・無料枠あり |
+| `gemini-pro` | 旧世代・安定 |
+
+> **Quota エラーが出る場合：** `gemini-1.5-flash` に変えてみてください。
+""")
+
     if st.button("APIキーを設定", type="primary"):
         new_gemini = gemini_input if gemini_input else keys["gemini_api_key"]
         new_deepl = deepl_input if deepl_input else keys["deepl_api_key"]
-        saved_to_file = save_api_keys(new_gemini, new_deepl)
+        saved_to_file = save_api_keys(new_gemini, new_deepl, selected_model)
         if saved_to_file:
             st.success("✅ APIキーを保存しました。次回起動時も入力不要です。")
         else:
@@ -487,7 +542,44 @@ with tab_pages:
 
         st.divider()
 
-        if st.button("テキストを抽出", type="primary"):
+        # ── 図・数式の読み取り ────────────────
+        fig_gemini_key = load_api_keys()["gemini_api_key"]
+        fig_model = load_api_keys().get("gemini_model", DEFAULT_GEMINI_MODEL)
+        col_ext, col_fig = st.columns(2)
+        with col_ext:
+            extract_btn = st.button("📄 テキストを抽出", type="primary")
+        with col_fig:
+            fig_btn = st.button(
+                "🔍 Geminiで図・数式を読み取る",
+                disabled=not fig_gemini_key,
+                help="選択ページの図・グラフ・数式・表をGeminiが説明します。APIキーが必要です。",
+            )
+
+        if extract_btn:
+            with st.spinner("テキストを抽出中..."):
+                text = extract_text(selected_book["path"], int(start_page), int(end_page))
+            st.session_state.extracted_text = text
+            st.session_state.translation_results = []
+            st.success(f"ページ {start_page}〜{end_page} のテキストを抽出しました。")
+
+        if fig_btn:
+            all_pages = list(range(start_page, end_page + 1))
+            fig_results = []
+            prog = st.progress(0, text="図・数式を読み取り中...")
+            for i, pnum in enumerate(all_pages):
+                result = read_page_figures(selected_book["path"], pnum, fig_gemini_key, fig_model)
+                fig_results.append(f"=== p.{pnum} ===\n{result}")
+                prog.progress((i + 1) / len(all_pages), text=f"p.{pnum} 読み取り中... {i+1}/{len(all_pages)}")
+            prog.empty()
+            combined = "\n\n".join(fig_results)
+            st.subheader("🔍 図・数式の読み取り結果")
+            st.text_area(
+                "読み取り結果（必要な箇所をコピーしてテキスト編集欄に追記できます）",
+                value=combined,
+                height=300,
+                label_visibility="collapsed",
+            )
+
             with st.spinner("テキストを抽出中..."):
                 text = extract_text(selected_book["path"], int(start_page), int(end_page))
             st.session_state.extracted_text = text
@@ -511,6 +603,7 @@ with tab_pages:
             keys = load_api_keys()
             gemini_key = keys["gemini_api_key"]
             deepl_key = keys["deepl_api_key"]
+            gemini_model = keys.get("gemini_model", DEFAULT_GEMINI_MODEL)
 
             st.markdown("**翻訳方法を選択**")
             col_ug, col_ud, col_ur = st.columns(3)
@@ -557,10 +650,10 @@ with tab_pages:
                         if use_deepl:
                             row["deepl"] = deepl_text
                     if use_gemini:
-                        row["gemini"] = translate_gemini(sentence, gemini_key)
+                        row["gemini"] = translate_gemini(sentence, gemini_key, gemini_model)
                         time.sleep(0.3)
                     if use_deepl_reorder and deepl_text:
-                        row["deepl_reorder"] = translate_deepl_reorder(sentence, deepl_text, gemini_key)
+                        row["deepl_reorder"] = translate_deepl_reorder(sentence, deepl_text, gemini_key, gemini_model)
                         time.sleep(0.3)
                     results.append(row)
                     progress.progress(
