@@ -29,13 +29,12 @@ def is_local() -> bool:
 
 
 GEMINI_MODELS = [
-    "gemini-2.5-flash-lite",   # 無料: 10RPM / 20RPD（デフォルト）
-    "gemini-3.1-flash-lite",   # 無料: 15RPM / 500RPD（ハイフン版）
-    "Gemini 3.1 Flash Lite",   # 無料: 15RPM / 500RPD（表示名版・こちらが動く場合あり）
+    "gemini-2.5-flash-lite",   # 無料: 10RPM / 20RPD（動作確認済み・デフォルト）
+    "gemini-3.1-flash-lite",   # 無料: 15RPM / 500RPD（APIで使えない場合あり）
     "gemini-2.5-flash",        # 無料: 5RPM / 20RPD
     "gemini-2.0-flash",        # 無料枠なし（使用不可）
 ]
-DEFAULT_GEMINI_MODEL = "Gemini 3.1 Flash Lite"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite"
 
 
 def load_api_keys() -> dict:
@@ -378,23 +377,45 @@ def build_script_text(results: list[dict], modes: list[str] | None = None) -> st
     """台本テキストを生成する。modes で含める翻訳種別を指定（None のとき全種別）。"""
     if modes is None:
         modes = list(DOWNLOAD_MODE_LABELS.keys())
+
+    CIRCLED = ["①", "②", "③", "④"]
+    multi = len(modes) > 1
+
     lines = ["=" * 60, "輪読会 台本", "=" * 60, ""]
+
+    # 複数モード選択時: 凡例を先頭に1回だけ出す
+    if multi:
+        legend = "  ".join(
+            f"{CIRCLED[i]} {DOWNLOAD_MODE_LABELS[m]}"
+            for i, m in enumerate(modes) if i < len(CIRCLED)
+        )
+        lines.append(f"凡例: {legend}")
+        lines.append("")
+
     for i, r in enumerate(results, 1):
         lines.append(f"【{i}】{r['sentence']}")
         lines.append("")
-        if "gemini" in modes and r.get("gemini"):
-            lines.append("  🤖 Gemini（英語語順訳）:")
-            if r.get("gemini_en"):
-                lines.append(f"  [英] {r['gemini_en']}")
-            lines.append(f"  [日] {r['gemini']}")
-        if "deepl" in modes and r.get("deepl"):
-            lines.append("  📝 DeepL（参考訳）:")
-            lines.append(f"  {r['deepl']}")
-        if "deepl_reorder" in modes and r.get("deepl_reorder"):
-            lines.append("  🔄 DeepL→Gemini並び替え:")
-            if r.get("deepl_reorder_en"):
-                lines.append(f"  [英] {r['deepl_reorder_en']}")
-            lines.append(f"  [日] {r['deepl_reorder']}")
+
+        for j, m in enumerate(modes):
+            prefix = f"{CIRCLED[j]} " if multi else ""
+
+            if m == "gemini" and r.get("gemini"):
+                if r.get("gemini_en"):
+                    lines.append(f"  {prefix}[英] {r['gemini_en']}")
+                    lines.append(f"  {'　 ' if multi else ''}[日] {r['gemini']}")
+                else:
+                    lines.append(f"  {prefix}{r['gemini']}")
+
+            elif m == "deepl" and r.get("deepl"):
+                lines.append(f"  {prefix}{r['deepl']}")
+
+            elif m == "deepl_reorder" and r.get("deepl_reorder"):
+                if r.get("deepl_reorder_en"):
+                    lines.append(f"  {prefix}[英] {r['deepl_reorder_en']}")
+                    lines.append(f"  {'　 ' if multi else ''}[日] {r['deepl_reorder']}")
+                else:
+                    lines.append(f"  {prefix}{r['deepl_reorder']}")
+
         lines.append("")
         lines.append("-" * 60)
         lines.append("")
