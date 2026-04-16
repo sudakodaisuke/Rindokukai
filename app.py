@@ -844,7 +844,15 @@ with tab_pages:
             if not use_gemini and not use_deepl and not use_deepl_reorder:
                 st.warning("少なくとも1つの翻訳方法を選択してください。")
             else:
-                st.info(f"APIリクエスト数の目安: Gemini {'1回（まとめて送信）' if use_gemini else '0回'} / DeepL {'1回（まとめて送信）' if (use_deepl or use_deepl_reorder) else '0回'} + 並び替え {'1回' if use_deepl_reorder else '0回'}")
+                n_chunks = (len(sentences) + GEMINI_CHUNK - 1) // GEMINI_CHUNK
+                gemini_calls = n_chunks if use_gemini else 0
+                reorder_calls = n_chunks if use_deepl_reorder else 0
+                total_gemini_calls = gemini_calls + reorder_calls
+                st.info(
+                    f"📡 Gemini APIリクエスト数の目安: **{total_gemini_calls} 回**（{len(sentences)}文 ÷ 10文/回）  "
+                    f"処理時間: 約 {total_gemini_calls * 20 // 60}〜{total_gemini_calls * 30 // 60 + 1} 分  \n"
+                    "⚠️ 止まったり失敗したら **1〜2分待ってから** 再度押してください（レート制限は1分で回復します）"
+                )
                 if st.button("🚀 台本を作成する", type="primary", disabled=not sentences):
                     results = [{"sentence": s, "gemini": "", "gemini_en": "", "deepl": "", "deepl_reorder": "", "deepl_reorder_en": ""} for s in sentences]
                     progress = st.progress(0, text="翻訳中...")
