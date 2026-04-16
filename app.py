@@ -199,33 +199,20 @@ DeepL訳: {deepl_text}
 並び替え後:"""
 
 
-GEMINI_CHUNK = 10  # 1回のAPIリクエストに含める最大文数
-
 
 def translate_gemini_batch(
     sentences: list[str], api_key: str, model_name: str = DEFAULT_GEMINI_MODEL,
-    on_chunk: object = None,
 ) -> list[dict]:
-    """複数の文をチャンク単位でGemini翻訳する（英語語順・文節訳）。
-    on_chunk(done, total) は各チャンク完了後に呼ばれるコールバック。
+    """複数の文を1回のAPIリクエストでまとめて翻訳する（英語語順・文節訳）。
     戻り値: [{"english": "英文スラッシュ区切り", "japanese": "日本語スラッシュ区切り"}, ...]
     """
     if not sentences:
         return []
-
-    import google.generativeai as genai
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(model_name)
-
-    all_results = [{"english": "", "japanese": ""} for _ in sentences]
-    block_pat = re.compile(
-        r"【(\d+)】\s*\n英[:：]\s*(.+?)\n日[:：]\s*(.+?)(?=\n?【\d+】|$)", re.DOTALL
-    )
-    total_chunks = (len(sentences) + GEMINI_CHUNK - 1) // GEMINI_CHUNK
-
-    for ci, chunk_start in enumerate(range(0, len(sentences), GEMINI_CHUNK)):
-        chunk = sentences[chunk_start:chunk_start + GEMINI_CHUNK]
-        numbered = "\n".join(f"【{i+1}】{s}" for i, s in enumerate(chunk))
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(model_name)
+        numbered = "\n".join(f"【{i+1}】{s}" for i, s in enumerate(sentences))
         prompt = f"""あなたは医薬品製造の専門家です。
 以下の英文リストを、英語の語順に従って文節ごとに訳してください。
 日本語として自然な語順ではなく、英文の前から後ろへ順番に訳し、各文節を「／」で区切ってください。
@@ -238,31 +225,27 @@ def translate_gemini_batch(
 
 英文リスト：
 {numbered}"""
-        try:
-            response = model.generate_content(
-                prompt, request_options={"timeout": 90}
-            )
-            result_text = response.text.strip()
-            matched = list(block_pat.finditer(result_text))
-            if matched:
-                for m in matched:
-                    idx = int(m.group(1)) - 1
-                    if 0 <= idx < len(chunk):
-                        all_results[chunk_start + idx]["english"] = m.group(2).strip()
-                        all_results[chunk_start + idx]["japanese"] = m.group(3).strip()
-            else:
-                for m in re.finditer(r"【(\d+)】\s*(.+?)(?=【\d+】|$)", result_text, re.DOTALL):
-                    idx = int(m.group(1)) - 1
-                    if 0 <= idx < len(chunk):
-                        all_results[chunk_start + idx]["japanese"] = m.group(2).strip()
-        except Exception as e:
-            for i in range(len(chunk)):
-                all_results[chunk_start + i]["japanese"] = f"[Gemini バッチエラー: {e}]"
-
-        if on_chunk:
-            on_chunk(ci + 1, total_chunks)
-
-    return all_results
+        response = model.generate_content(prompt, request_options={"timeout": 120})
+        result_text = response.text.strip()
+        results = [{"english": "", "japanese": ""} for _ in sentences]
+        block_pat = re.compile(
+            r"【(\d+)】\s*\n英[:：]\s*(.+?)\n日[:：]\s*(.+?)(?=\n?【\d+】|$)", re.DOTALL
+        )
+        matched = list(block_pat.finditer(result_text))
+        if matched:
+            for m in matched:
+                idx = int(m.group(1)) - 1
+                if 0 <= idx < len(sentences):
+                    results[idx]["english"] = m.group(2).strip()
+                    results[idx]["japanese"] = m.group(3).strip()
+        else:
+            for m in re.finditer(r"【(\d+)】\s*(.+?)(?=【\d+】|$)", result_text, re.DOTALL):
+                idx = int(m.group(1)) - 1
+                if 0 <= idx < len(sentences):
+                    results[idx]["japanese"] = m.group(2).strip()
+        return results
+    except Exception as e:
+        return [{"english": "", "japanese": f"[Gemini バッチエラー: {e}]"}] * len(sentences)
 
 
 def translate_deepl_batch(sentences: list[str], api_key: str) -> list[str]:
@@ -280,30 +263,20 @@ def translate_deepl_batch(sentences: list[str], api_key: str) -> list[str]:
 
 def translate_deepl_reorder_batch(
     sentences: list[str], deepl_texts: list[str], api_key: str,
-    model_name: str = DEFAULT_GEMINI_MODEL, on_chunk: object = None,
+    model_name: str = DEFAULT_GEMINI_MODEL,
 ) -> list[dict]:
-    """DeepL訳をGeminiで並び替え、英文も同じ位置でスラッシュ区切りして返す（チャンク処理）。
+    """DeepL訳をGeminiで並び替え、英文も同じ位置でスラッシュ区切りして返す。
     戻り値: [{"english": "英文スラッシュ区切り", "japanese": "日本語スラッシュ区切り"}, ...]
     """
     if not sentences:
         return []
-
-    import google.generativeai as genai
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(model_name)
-
-    all_results = [{"english": "", "japanese": ""} for _ in sentences]
-    block_pat = re.compile(
-        r"【(\d+)】\s*\n英[:：]\s*(.+?)\n日[:：]\s*(.+?)(?=\n?【\d+】|$)", re.DOTALL
-    )
-    total_chunks = (len(sentences) + GEMINI_CHUNK - 1) // GEMINI_CHUNK
-
-    for ci, chunk_start in enumerate(range(0, len(sentences), GEMINI_CHUNK)):
-        chunk_s = sentences[chunk_start:chunk_start + GEMINI_CHUNK]
-        chunk_d = deepl_texts[chunk_start:chunk_start + GEMINI_CHUNK]
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(model_name)
         numbered = "\n".join(
             f"【{i+1}】英文: {s}\n　　DeepL訳: {d}"
-            for i, (s, d) in enumerate(zip(chunk_s, chunk_d))
+            for i, (s, d) in enumerate(zip(sentences, deepl_texts))
         )
         prompt = f"""あなたは医薬品製造の専門家です。
 以下の各英文とDeepL訳のペアについて、DeepL訳を元の英文の語順に従って文節ごとに並び替えてください。
@@ -312,27 +285,23 @@ def translate_deepl_reorder_batch(
 出力形式（番号・英・日のみ、説明不要）：
 【1】
 英: In wet granulation, ／it is conceptually important ／to consider drying and cooling ／as an integral part ／of the granulation process.
-日: 湿式造粒では、／概念的に重要です。／乾燥と冷却を／位置づけることが／造粒工程の不可欠な一部として
+日: 湿式造粒では、／概念的に重要です。／乃至は乾燥と冷却を／位置づけることが／造粒工程の不可欠な一部として
 
 {numbered}"""
-        try:
-            response = model.generate_content(
-                prompt, request_options={"timeout": 90}
-            )
-            result_text = response.text.strip()
-            for m in block_pat.finditer(result_text):
-                idx = int(m.group(1)) - 1
-                if 0 <= idx < len(chunk_s):
-                    all_results[chunk_start + idx]["english"] = m.group(2).strip()
-                    all_results[chunk_start + idx]["japanese"] = m.group(3).strip()
-        except Exception as e:
-            for i in range(len(chunk_s)):
-                all_results[chunk_start + i]["japanese"] = f"[並び替えバッチエラー: {e}]"
-
-        if on_chunk:
-            on_chunk(ci + 1, total_chunks)
-
-    return all_results
+        response = model.generate_content(prompt, request_options={"timeout": 120})
+        result_text = response.text.strip()
+        results = [{"english": "", "japanese": ""} for _ in sentences]
+        block_pat = re.compile(
+            r"【(\d+)】\s*\n英[:：]\s*(.+?)\n日[:：]\s*(.+?)(?=\n?【\d+】|$)", re.DOTALL
+        )
+        for m in block_pat.finditer(result_text):
+            idx = int(m.group(1)) - 1
+            if 0 <= idx < len(sentences):
+                results[idx]["english"] = m.group(2).strip()
+                results[idx]["japanese"] = m.group(3).strip()
+        return results
+    except Exception as e:
+        return [{"english": "", "japanese": f"[並び替えバッチエラー: {e}]"}] * len(sentences)
 
 
 def translate_gemini(sentence: str, api_key: str, model_name: str = DEFAULT_GEMINI_MODEL) -> str:
@@ -844,13 +813,9 @@ with tab_pages:
             if not use_gemini and not use_deepl and not use_deepl_reorder:
                 st.warning("少なくとも1つの翻訳方法を選択してください。")
             else:
-                n_chunks = (len(sentences) + GEMINI_CHUNK - 1) // GEMINI_CHUNK
-                gemini_calls = n_chunks if use_gemini else 0
-                reorder_calls = n_chunks if use_deepl_reorder else 0
-                total_gemini_calls = gemini_calls + reorder_calls
+                gemini_calls = (1 if use_gemini else 0) + (1 if use_deepl_reorder else 0)
                 st.info(
-                    f"📡 Gemini APIリクエスト数の目安: **{total_gemini_calls} 回**（{len(sentences)}文 ÷ 10文/回）  "
-                    f"処理時間: 約 {total_gemini_calls * 20 // 60}〜{total_gemini_calls * 30 // 60 + 1} 分  \n"
+                    f"📡 Gemini APIリクエスト数: **{gemini_calls} 回** / DeepL: {'1 回' if (use_deepl or use_deepl_reorder) else '0 回'}  \n"
                     "⚠️ 止まったり失敗したら **1〜2分待ってから** 再度押してください（レート制限は1分で回復します）"
                 )
                 if st.button("🚀 台本を作成する", type="primary", disabled=not sentences):
@@ -866,29 +831,19 @@ with tab_pages:
                             for i, r in enumerate(results):
                                 r["deepl"] = deepl_texts[i]
 
-                    # Geminiバッチ翻訳（10文ずつ）
+                    # Geminiバッチ翻訳（1回で全文）
                     if use_gemini:
-                        n_chunks = (len(sentences) + GEMINI_CHUNK - 1) // GEMINI_CHUNK
-                        progress.progress(0.1, text=f"Gemini 翻訳中... 0/{n_chunks} 回送信")
-                        def gemini_on_chunk(done, total):
-                            progress.progress(0.1 + 0.3 * done / total,
-                                              text=f"Gemini 翻訳中... {done}/{total} 回送信")
-                        gemini_dicts = translate_gemini_batch(
-                            sentences, gemini_key, gemini_model, on_chunk=gemini_on_chunk
-                        )
+                        progress.progress(0.4, text="Gemini 翻訳中（まとめて1回送信）...")
+                        gemini_dicts = translate_gemini_batch(sentences, gemini_key, gemini_model)
                         for i, r in enumerate(results):
                             r["gemini"] = gemini_dicts[i]["japanese"]
                             r["gemini_en"] = gemini_dicts[i]["english"]
 
-                    # DeepL→Gemini並び替え（10文ずつ）
+                    # DeepL→Gemini並び替え（1回で全文）
                     if use_deepl_reorder:
-                        n_chunks = (len(sentences) + GEMINI_CHUNK - 1) // GEMINI_CHUNK
-                        progress.progress(0.4, text=f"Gemini 並び替え中... 0/{n_chunks} 回送信")
-                        def reorder_on_chunk(done, total):
-                            progress.progress(0.4 + 0.55 * done / total,
-                                              text=f"Gemini 並び替え中... {done}/{total} 回送信")
+                        progress.progress(0.7, text="Gemini 並び替え中（まとめて1回送信）...")
                         reorder_dicts = translate_deepl_reorder_batch(
-                            sentences, deepl_texts, gemini_key, gemini_model, on_chunk=reorder_on_chunk
+                            sentences, deepl_texts, gemini_key, gemini_model
                         )
                         for i, r in enumerate(results):
                             r["deepl_reorder"] = reorder_dicts[i]["japanese"]
