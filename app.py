@@ -219,7 +219,7 @@ def translate_gemini_batch(
 さらに、英文も同じ文節の区切り位置でスラッシュ区切りにしてください。
 
 出力形式（番号・英・日のみ、説明不要）：
-【1】
+【例】
 英: In wet granulation, ／it is conceptually important ／to consider drying and cooling ／as an integral part ／of the granulation process.
 日: 湿式造粒では、／概念的に重要である。／乾燥と冷却を／位置づけることが／造粒工程の不可欠な一部として
 
@@ -283,7 +283,7 @@ def translate_deepl_reorder_batch(
 さらに、英文も同じ文節の区切り位置でスラッシュ区切りにしてください。
 
 出力形式（番号・英・日のみ、説明不要）：
-【1】
+【例】
 英: In wet granulation, ／it is conceptually important ／to consider drying and cooling ／as an integral part ／of the granulation process.
 日: 湿式造粒では、／概念的に重要です。／乃至は乾燥と冷却を／位置づけることが／造粒工程の不可欠な一部として
 
