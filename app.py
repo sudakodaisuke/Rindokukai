@@ -216,7 +216,7 @@ def translate_gemini_batch(
         prompt = f"""あなたは医薬品製造の専門家です。
 以下の英文リストを、英語の語順に従って文節ごとに訳してください。
 日本語として自然な語順ではなく、英文の前から後ろへ順番に訳し、各文節を「／」で区切ってください。
-さらに、英文も同じ文節の区切り位置でスラッシュ区切りにしてください。
+英文も必ず同じ文節の区切り位置で「／」を入れてください。英文のスラッシュは省略しないでください。
 
 出力形式（番号・英・日のみ、説明不要）：
 【例】
@@ -243,6 +243,10 @@ def translate_gemini_batch(
                 idx = int(m.group(1)) - 1
                 if 0 <= idx < len(sentences):
                     results[idx]["japanese"] = m.group(2).strip()
+        # 英文にスラッシュがない場合は元の英文をフォールバックとして使用
+        for i, r in enumerate(results):
+            if "／" not in r.get("english", ""):
+                results[i]["english"] = sentences[i]
         return results
     except Exception as e:
         return [{"english": "", "japanese": f"[Gemini バッチエラー: {e}]"}] * len(sentences)
@@ -280,7 +284,7 @@ def translate_deepl_reorder_batch(
         )
         prompt = f"""あなたは医薬品製造の専門家です。
 以下の各英文とDeepL訳のペアについて、DeepL訳を元の英文の語順に従って文節ごとに並び替えてください。
-さらに、英文も同じ文節の区切り位置でスラッシュ区切りにしてください。
+英文も必ず同じ文節の区切り位置で「／」を入れてください。英文のスラッシュは省略しないでください。
 
 出力形式（番号・英・日のみ、説明不要）：
 【例】
@@ -299,6 +303,10 @@ def translate_deepl_reorder_batch(
             if 0 <= idx < len(sentences):
                 results[idx]["english"] = m.group(2).strip()
                 results[idx]["japanese"] = m.group(3).strip()
+        # 英文にスラッシュがない場合は元の英文をフォールバックとして使用
+        for i, r in enumerate(results):
+            if "／" not in r.get("english", ""):
+                results[i]["english"] = sentences[i]
         return results
     except Exception as e:
         return [{"english": "", "japanese": f"[並び替えバッチエラー: {e}]"}] * len(sentences)
