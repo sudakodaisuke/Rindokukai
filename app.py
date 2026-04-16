@@ -459,7 +459,6 @@ with tab_settings:
         gemini_input = st.text_input(
             "Gemini API キー",
             value=keys["gemini_api_key"],
-            type="password",
             placeholder="AIzaSy...",
             key="gemini_key_input",
             label_visibility="collapsed",
@@ -481,7 +480,6 @@ with tab_settings:
         deepl_input = st.text_input(
             "DeepL API キー",
             value=keys["deepl_api_key"],
-            type="password",
             placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx",
             key="deepl_key_input",
             label_visibility="collapsed",
