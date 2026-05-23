@@ -29,12 +29,12 @@ def is_local() -> bool:
 
 
 GEMINI_MODELS = [
-    "gemini-2.5-flash-lite",          # 無料: 10RPM / 250K TPM（安定・デフォルト）
-    "gemini-3.1-flash-lite-preview",  # 無料: 15RPM（プレビュー・レート超過で止まりやすい）
-    "gemini-2.5-flash",               # 無料: 5RPM / 250K TPM
-    "gemini-2.0-flash",               # 無料枠なし（使用不可）
+    "gemini-3.1-flash-lite",      # デフォルト向き: 15RPM / 250K TPM / 500RPD
+    "gemini-3-flash-preview",     # 品質重視で試す用: 5RPM / 250K TPM / 20RPD
+    "gemini-2.5-flash-lite",      # 予備
+    "gemini-2.5-flash",           # 予備・品質寄り
 ]
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite"
+DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
 
 
 def load_api_keys() -> dict:
