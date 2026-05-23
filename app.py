@@ -29,13 +29,12 @@ def is_local() -> bool:
 
 
 GEMINI_MODELS = [
-    "gemini-2.5-flash-lite",          # 無料: 10RPM / 250K TPM（安定・デフォルト）
-    "gemini-3.1-flash-lite-preview",  # 無料: 15RPM（プレビュー・レート超過で止まりやすい）
-    "gemini-2.5-flash",               # 無料: 5RPM / 250K TPM
-    "gemini-2.0-flash",               # 無料枠なし（使用不可）
+    "gemini-3.1-flash-lite",  # 無料: 15RPM / 250K TPM / 500RPD（第一候補）
+    "gemini-2.5-flash-lite",  # 無料: 10RPM / 250K TPM / 20RPD
+    "gemini-3-flash",         # 無料: 5RPM / 250K TPM / 20RPD
+    "gemini-2.5-flash",       # 無料: 5RPM / 250K TPM / 20RPD
 ]
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite"
-
+DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
 
 def load_api_keys() -> dict:
     """APIキーをセッション → config.json（ローカルのみ）の順で読み込む。"""
@@ -527,23 +526,24 @@ with tab_settings:
     st.caption(f"使用するモデル: `{effective_model}`")
 
     st.info(
-        "💡 Gemini API はモデルごとに **1分あたりの利用回数（RPM）** に上限があります。"
-        "うまくいかない・止まる場合は **別のモデルに切り替えて**「確定して保存する」を押してみてください。"
-        "制限は **1分後に自動回復** します。"
-    )
+    "💡 Gemini API はモデルごとに **1分あたりの利用回数（RPM）** に上限があります。"
+    "うまくいかない・止まる場合は **別のモデルに切り替えて**「確定して保存する」を押してみてください。"
+    "制限は **1分後に自動回復** します。"
+    "モデルは変更されることがあるため、うまくいかない場合は製作者に連絡してください。"
+)
 
-    with st.expander("📊 モデルの無料枠とエラー時の対処"):
-        st.markdown("""
+with st.expander("📊 モデルの無料枠とエラー時の対処"):
+    st.markdown("""
 **RPM（1分あたりの上限回数）について**
 Gemini API は無料で使える回数が1分間に制限されています。
 超えると応答が止まりますが、**1分待てば自動的に回復**します。
 
 | モデル | RPM（1分） | 安定性 | おすすめ |
 |---|---|---|---|
-| `gemini-2.5-flash-lite` | 10回/分 | ⭐ 安定 | ★★★ デフォルト |
-| `gemini-3.1-flash-lite-preview` | 15回/分 | ⚠️ プレビュー版・超過しやすい | ★★ |
+| `gemini-3.1-flash-lite` | 15回/分 | ⭐ 安定 | ★★★ デフォルト |
+| `gemini-2.5-flash-lite` | 10回/分 | ⭐ 安定 | ★★ |
+| `gemini-3-flash` | 5回/分 | ⭐ 安定 | ★ |
 | `gemini-2.5-flash` | 5回/分 | ⭐ 安定 | ★ |
-| `gemini-2.0-flash` | **0（使用不可）** | ❌ | ❌ |
 
 **止まる・エラーになる場合：**
 1. 別のモデルを選んで「確定して保存する」を押す
@@ -552,6 +552,7 @@ Gemini API は無料で使える回数が1分間に制限されています。
 **モデル名エラーの場合：**
 [Google AI Studio](https://aistudio.google.com) → モデル選択 → 「Get code」→「Python」でコード内の正確な名前を確認できます。
 """)
+
 
     st.warning("⚠️ APIキーやモデルを変更したら、必ず下のボタンを押してください！")
     if st.button("✅ 確定して保存する", type="primary", use_container_width=True):
