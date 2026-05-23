@@ -199,6 +199,51 @@ DeepL訳: {deepl_text}
 並び替え後:"""
 
 
+def parse_labeled_batch_output(result_text: str, expected_count: int) -> list[dict]:
+    """Geminiのバッチ出力から英/日のペアを取り出す。"""
+    results = [{"english": "", "japanese": ""} for _ in range(expected_count)]
+    text = result_text.replace("\r\n", "\n").strip()
+    en_label = r"(?:英|英文|英語|EN|GB)"
+    ja_label = r"(?:日|日本語|JA|JP)"
+
+    def clean(value: str) -> str:
+        value = re.sub(r"^\s*[-*]\s*", "", value.strip())
+        return value.strip()
+
+    pair_pat = re.compile(
+        rf"{en_label}\s*[:：]\s*(.+?)"
+        rf"(?=(?:\n|\s)+{ja_label}\s*[:：])"
+        rf"(?:\n|\s)+{ja_label}\s*[:：]\s*(.+?)"
+        rf"(?=(?:\n\s*(?:[-*]\s*)?(?:\*\*)?【\d+】)|(?:\n|\s)+{en_label}\s*[:：]|\Z)",
+        re.DOTALL | re.IGNORECASE,
+    )
+
+    block_pat = re.compile(
+        r"(?:^|\n)\s*(?:[-*]\s*)?(?:\*\*)?【(\d+)】(?:\*\*)?\s*(.*?)"
+        r"(?=(?:\n\s*(?:[-*]\s*)?(?:\*\*)?【\d+】(?:\*\*)?)|\Z)",
+        re.DOTALL,
+    )
+    matched_blocks = list(block_pat.finditer(text))
+    for block in matched_blocks:
+        idx = int(block.group(1)) - 1
+        if not 0 <= idx < expected_count:
+            continue
+        pair = pair_pat.search(block.group(2))
+        if pair:
+            results[idx]["english"] = clean(pair.group(1))
+            results[idx]["japanese"] = clean(pair.group(2))
+
+    if any(r["japanese"] for r in results):
+        return results
+
+    for idx, pair in enumerate(pair_pat.finditer(text)):
+        if idx >= expected_count:
+            break
+        results[idx]["english"] = clean(pair.group(1))
+        results[idx]["japanese"] = clean(pair.group(2))
+    return results
+
+
 
 def translate_gemini_batch(
     sentences: list[str], api_key: str, model_name: str = DEFAULT_GEMINI_MODEL,
@@ -229,18 +274,8 @@ def translate_gemini_batch(
 {numbered}"""
         response = model.generate_content(prompt, request_options={"timeout": 120})
         result_text = response.text.strip()
-        results = [{"english": "", "japanese": ""} for _ in sentences]
-        block_pat = re.compile(
-            r"【(\d+)】\s*\n英[:：]\s*(.+?)\n日[:：]\s*(.+?)(?=\n?【\d+】|$)", re.DOTALL
-        )
-        matched = list(block_pat.finditer(result_text))
-        if matched:
-            for m in matched:
-                idx = int(m.group(1)) - 1
-                if 0 <= idx < len(sentences):
-                    results[idx]["english"] = m.group(2).strip()
-                    results[idx]["japanese"] = m.group(3).strip()
-        else:
+        results = parse_labeled_batch_output(result_text, len(sentences))
+        if not any(r["japanese"] for r in results):
             for m in re.finditer(r"【(\d+)】\s*(.+?)(?=【\d+】|$)", result_text, re.DOTALL):
                 idx = int(m.group(1)) - 1
                 if 0 <= idx < len(sentences):
@@ -296,15 +331,7 @@ def translate_deepl_reorder_batch(
 {numbered}"""
         response = model.generate_content(prompt, request_options={"timeout": 120})
         result_text = response.text.strip()
-        results = [{"english": "", "japanese": ""} for _ in sentences]
-        block_pat = re.compile(
-            r"【(\d+)】\s*\n英[:：]\s*(.+?)\n日[:：]\s*(.+?)(?=\n?【\d+】|$)", re.DOTALL
-        )
-        for m in block_pat.finditer(result_text):
-            idx = int(m.group(1)) - 1
-            if 0 <= idx < len(sentences):
-                results[idx]["english"] = m.group(2).strip()
-                results[idx]["japanese"] = m.group(3).strip()
+        results = parse_labeled_batch_output(result_text, len(sentences))
         # 英文にスラッシュがない場合は元の英文をフォールバックとして使用
         for i, r in enumerate(results):
             if "／" not in r.get("english", ""):
