@@ -887,6 +887,7 @@ with tab_pages:
                             r["deepl_reorder_en"] = reorder_dicts[i]["english"]
 
                     st.session_state.translation_results = results
+                    st.session_state.pop("download_modes", None)
                     progress.empty()
                     st.success("台本を作成しました。「📋 台本」タブで確認してください。")
 
